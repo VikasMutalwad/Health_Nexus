@@ -1,16 +1,53 @@
-# health_nexus
+🩺 Health_Nexus
+AI-Powered Portable Diagnostic Kit for Urine, Blood & Vitals
+📌 Overview
 
-A new Flutter project.
+Health_Nexus-DX is a portable, AI-driven diagnostic system designed to deliver fast, reliable, point-of-care medical testing in Primary Health Centres (PHCs) and rural healthcare environments. The system integrates urine analysis, blood testing, and vital sign monitoring with edge AI and cloud connectivity to support timely clinical decisions without dependence on full laboratory infrastructure.
 
-## Getting Started
+🚀 Key Features
 
-This project is a starting point for a Flutter application.
+🧪 AI-based Urine Dipstick & LFA Analysis
 
-A few resources to get you started if this is your first Flutter project:
+🩸 AI-assisted Blood Test Evaluation (Glucose, Hemoglobin)
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+❤️ Vitals Monitoring with AI Analysis (ECG, SpO₂, Pulse, Temperature)
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+🧠 On-device AI Inference using Raspberry Pi
+
+☁️ Cloud-based Data Storage & Doctor Access
+
+📊 Unified Digital Health Records
+
+🛠️ Technology Stack
+
+Hardware: Raspberry Pi, Camera Module, Biomedical Sensors
+
+AI/ML: TensorFlow Lite, OpenCV
+
+Programming: Python, Embedded C++
+
+Cloud & Backend: Firebase
+
+Frontend: Mobile Dashboard
+
+⚙️ System Architecture (High Level)
+
+Sensor & image data acquisition
+
+Preprocessing on edge device
+
+AI-based analysis (image & signal)
+
+Secure cloud synchronization
+
+Visualization via dashboard for clinicians
+
+🌍 Impact
+
+Enables point-of-care diagnostics without lab dependency
+
+Improves healthcare accessibility in rural areas
+
+Reduces diagnosis time through AI-assisted interpretation
+
+Supports digital record keeping & continuity of care
