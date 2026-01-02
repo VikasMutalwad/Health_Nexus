@@ -37,12 +37,23 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
-      body: Center(
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF0F172A), Color(0xFF334155)],
+          ),
+        ),
+        child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 450),
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(30),
+          child: Card(
+            elevation: 8,
+            margin: const EdgeInsets.all(20),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(30),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -103,7 +114,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       const SizedBox(width: 15),
                       Expanded(
                         child: DropdownButtonFormField<String>(
-                          value: _selectedGender,
+                          initialValue: _selectedGender,
                           decoration: const InputDecoration(labelText: "Gender"),
                           items: ["Male", "Female", "Other"]
                               .map((e) =>
@@ -163,12 +174,12 @@ class _LoginScreenState extends State<LoginScreen> {
                   const SizedBox(height: 30),
                 ],
                 DropdownButtonFormField<String>(
-                  value: _selectedRole,
+                  initialValue: _selectedRole,
                   decoration: const InputDecoration(labelText: "Access Level"),
                   items: const [
-                    DropdownMenuItem(value: 'patient', child: Text("Patient")),
-                    DropdownMenuItem(value: 'worker', child: Text("Health Worker")),
-                    DropdownMenuItem(value: 'doctor', child: Text("Doctor")),
+                    DropdownMenuItem(value: 'patient', child: Text("Patient Portal")),
+                    DropdownMenuItem(value: 'worker', child: Text("Health Worker / PHC")),
+                    DropdownMenuItem(value: 'doctor', child: Text("Doctor Portal")),
                   ],
                   onChanged: (val) => setState(() => _selectedRole = val!),
                 ),
@@ -249,7 +260,9 @@ class _LoginScreenState extends State<LoginScreen> {
               ],
             ),
           ),
+          ),
         ),
+      ),
       ),
     );
   }

@@ -10,8 +10,9 @@ Future<void> main() async {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
-    debugPrint("Firebase Initialized Successfully");
+    debugPrint("Firebase Initialized - New Build Running");
   } catch (e) {
+    // This catches errors like missing platform config (Linux) or network issues
     debugPrint("Firebase Initialization Error: $e");
   }
 
