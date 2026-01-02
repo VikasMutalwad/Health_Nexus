@@ -310,6 +310,12 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
                 ],
               ),
             ),
+            IconButton(
+              icon: const Icon(Icons.chat_bubble_outline, color: Colors.blue),
+              onPressed: () => _showChatDialog(doc.id, name),
+              tooltip: "Chat with Worker",
+            ),
+            const SizedBox(width: 8),
             ElevatedButton(
               onPressed: () => _openPatientReview(doc.id, data, context),
               style: ElevatedButton.styleFrom(
@@ -328,16 +334,28 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
       children: [
         Padding(
           padding: const EdgeInsets.all(20),
-          child: TextField(
-            controller: _searchController,
-            decoration: InputDecoration(
-              hintText: "Search patients by name...",
-              prefixIcon: const Icon(Icons.search),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-              filled: true,
-              fillColor: Colors.white,
-            ),
-            onChanged: (val) => setState(() => _searchQuery = val.toLowerCase()),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    hintText: "Search patients by name...",
+                    prefixIcon: const Icon(Icons.search),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    filled: true,
+                    fillColor: Colors.white,
+                  ),
+                  onChanged: (val) => setState(() => _searchQuery = val.toLowerCase()),
+                ),
+              ),
+              const SizedBox(width: 10),
+              IconButton(
+                onPressed: () => _clearCollection(context, 'diagnostic_reports'),
+                icon: const Icon(Icons.delete_sweep, color: Colors.red),
+                tooltip: "Clear All Patients",
+              ),
+            ],
           ),
         ),
         Expanded(
@@ -420,73 +438,93 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
   }
 
   Widget _buildScheduleView(BuildContext context) {
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance.collection('appointments').orderBy('requestDate', descending: true).snapshots(),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-        final docs = snapshot.data!.docs;
-        if (docs.isEmpty) return const Center(child: Text("No appointments found"));
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text("Appointments", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              IconButton(
+                onPressed: () => _clearCollection(context, 'appointments'),
+                icon: const Icon(Icons.delete_sweep, color: Colors.red),
+                tooltip: "Clear Schedule",
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance.collection('appointments').orderBy('requestDate', descending: true).snapshots(),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+              final docs = snapshot.data!.docs;
+              if (docs.isEmpty) return const Center(child: Text("No appointments found"));
 
-        return ListView.builder(
-          padding: const EdgeInsets.all(20),
-          itemCount: docs.length,
-          itemBuilder: (context, index) {
-            final doc = docs[index];
-            final data = doc.data() as Map<String, dynamic>;
-            final status = data['status'] ?? 'pending';
-            final patientName = data['patientName'] ?? 'Unknown';
-            final timestamp = (data['requestDate'] as Timestamp?)?.toDate() ?? DateTime.now();
-            final doctorMessage = data['doctorMessage'];
+              return ListView.builder(
+                padding: const EdgeInsets.all(20),
+                itemCount: docs.length,
+                itemBuilder: (context, index) {
+                  final doc = docs[index];
+                  final data = doc.data() as Map<String, dynamic>;
+                  final status = data['status'] ?? 'pending';
+                  final patientName = data['patientName'] ?? 'Unknown';
+                  final timestamp = (data['requestDate'] as Timestamp?)?.toDate() ?? DateTime.now();
+                  final doctorMessage = data['doctorMessage'];
 
-            Color statusColor = status == 'confirmed' ? Colors.green : (status == 'rejected' ? Colors.red : Colors.orange);
+                  Color statusColor = status == 'confirmed' ? Colors.green : (status == 'rejected' ? Colors.red : Colors.orange);
 
-            return Card(
-              margin: const EdgeInsets.only(bottom: 15),
-              child: ExpansionTile(
-                leading: CircleAvatar(
-                  backgroundColor: statusColor.withAlpha(30),
-                  child: Icon(Icons.calendar_today, color: statusColor),
-                ),
-                title: Text(patientName, style: const TextStyle(fontWeight: FontWeight.bold)),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text("Status: ${status.toUpperCase()}"),
-                    Text("Date: ${timestamp.toString().split('.')[0]}"),
-                    if (doctorMessage != null && doctorMessage.toString().isNotEmpty)
-                      Text("Msg: $doctorMessage", style: const TextStyle(fontStyle: FontStyle.italic, color: Colors.grey)),
-                  ],
-                ),
-                children: [
-                  if (status == 'pending')
-                    Padding(
-                      padding: const EdgeInsets.all(15),
-                      child: Row(
+                  return Card(
+                    margin: const EdgeInsets.only(bottom: 15),
+                    child: ExpansionTile(
+                      leading: CircleAvatar(
+                        backgroundColor: statusColor.withAlpha(30),
+                        child: Icon(Icons.calendar_today, color: statusColor),
+                      ),
+                      title: Text(patientName, style: const TextStyle(fontWeight: FontWeight.bold)),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Expanded(
-                            child: OutlinedButton(
-                              onPressed: () => _showDecisionDialog(context, doc.id, 'rejected'),
-                              style: OutlinedButton.styleFrom(foregroundColor: Colors.red, side: const BorderSide(color: Colors.red)),
-                              child: const Text("Reject"),
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: ElevatedButton(
-                              onPressed: () => _showDecisionDialog(context, doc.id, 'confirmed'),
-                              style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
-                              child: const Text("Accept"),
-                            ),
-                          ),
+                          Text("Status: ${status.toUpperCase()}"),
+                          Text("Date: ${timestamp.toString().split('.')[0]}"),
+                          if (doctorMessage != null && doctorMessage.toString().isNotEmpty)
+                            Text("Msg: $doctorMessage", style: const TextStyle(fontStyle: FontStyle.italic, color: Colors.grey)),
                         ],
                       ),
+                      children: [
+                        if (status == 'pending')
+                          Padding(
+                            padding: const EdgeInsets.all(15),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: OutlinedButton(
+                                    onPressed: () => _showDecisionDialog(context, doc.id, 'rejected'),
+                                    style: OutlinedButton.styleFrom(foregroundColor: Colors.red, side: const BorderSide(color: Colors.red)),
+                                    child: const Text("Reject"),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: ElevatedButton(
+                                    onPressed: () => _showDecisionDialog(context, doc.id, 'confirmed'),
+                                    style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
+                                    child: const Text("Accept"),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
                     ),
-                ],
-              ),
-            );
-          },
-        );
-      },
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 
@@ -534,8 +572,18 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text("Diagnostic History",
-              style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text("Diagnostic History",
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              IconButton(
+                onPressed: () => _clearCollection(context, 'diagnostic_reports'),
+                icon: const Icon(Icons.delete_sweep, color: Colors.red),
+                tooltip: "Clear History",
+              ),
+            ],
+          ),
           const Text("Past reports and uploads",
               style: TextStyle(color: Colors.grey)),
           const SizedBox(height: 20),
@@ -580,25 +628,34 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
                         ),
                         subtitle:
                             Text("Date: ${timestamp.toString().split('.')[0]}"),
-                        trailing: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: (data['status'] == 'reviewed')
-                                ? Colors.green.withAlpha(26)
-                                : Colors.orange.withAlpha(26),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            data['status']?.toUpperCase() ?? 'PENDING',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 10,
-                              color: (data['status'] == 'reviewed')
-                                  ? Colors.green
-                                  : Colors.orange,
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.chat_bubble_outline, color: Colors.blue),
+                              onPressed: () => _showChatDialog(docs[index].id, data['patientName'] ?? 'Unknown'),
                             ),
-                          ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: (data['status'] == 'reviewed')
+                                    ? Colors.green.withAlpha(26)
+                                    : Colors.orange.withAlpha(26),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                data['status']?.toUpperCase() ?? 'PENDING',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 10,
+                                  color: (data['status'] == 'reviewed')
+                                      ? Colors.green
+                                      : Colors.orange,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                         children: [
                           Padding(
@@ -654,6 +711,36 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
     );
   }
 
+  Future<void> _clearCollection(BuildContext context, String collectionPath) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Clear All Records?"),
+        content: const Text("This action cannot be undone. Are you sure you want to delete all records in this section?"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text("Delete All"),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      final snapshot = await FirebaseFirestore.instance.collection(collectionPath).get();
+      final batch = FirebaseFirestore.instance.batch();
+      for (final doc in snapshot.docs) {
+        batch.delete(doc.reference);
+      }
+      await batch.commit();
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("All records cleared.")));
+      }
+    }
+  }
+
   Widget _buildStatCard(String title, String value, Color color) {
     return Container(
       width: double.infinity,
@@ -676,6 +763,89 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
           Text(title,
               style: const TextStyle(color: Colors.grey, fontSize: 14)),
         ],
+      ),
+    );
+  }
+
+  void _showChatDialog(String reportId, String patientName) {
+    final TextEditingController msgController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text("Chat: $patientName"),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 400,
+          child: Column(
+            children: [
+              Expanded(
+                child: StreamBuilder<QuerySnapshot>(
+                  stream: FirebaseFirestore.instance
+                      .collection('diagnostic_reports')
+                      .doc(reportId)
+                      .collection('messages')
+                      .orderBy('timestamp', descending: true)
+                      .snapshots(),
+                  builder: (ctx, snapshot) {
+                    if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+                    final msgs = snapshot.data!.docs;
+                    if (msgs.isEmpty) return const Center(child: Text("No messages yet."));
+                    return ListView.builder(
+                      reverse: true,
+                      itemCount: msgs.length,
+                      itemBuilder: (ctx, i) {
+                        final m = msgs[i].data() as Map<String, dynamic>;
+                        final isMe = m['role'] == 'doctor';
+                        return Align(
+                          alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+                          child: Container(
+                            margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: isMe ? Colors.blue.shade100 : Colors.grey.shade200,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(m['message'], style: const TextStyle(fontSize: 14)),
+                                Text(m['senderName'] ?? '', style: const TextStyle(fontSize: 10, color: Colors.black54)),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+              const Divider(),
+              Row(
+                children: [
+                  Expanded(child: TextField(controller: msgController, decoration: const InputDecoration(hintText: "Type a message..."))),
+                  IconButton(
+                    icon: const Icon(Icons.send),
+                    onPressed: () {
+                      if (msgController.text.trim().isEmpty) return;
+                      FirebaseFirestore.instance
+                          .collection('diagnostic_reports')
+                          .doc(reportId)
+                          .collection('messages')
+                          .add({
+                        'message': msgController.text.trim(),
+                        'senderName': 'Dr. ${widget.session.username}',
+                        'role': 'doctor',
+                        'timestamp': FieldValue.serverTimestamp(),
+                      });
+                      msgController.clear();
+                    },
+                  )
+                ],
+              )
+            ],
+          ),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Close"))],
       ),
     );
   }

@@ -23,14 +23,15 @@ class _HealthWorkerDashboardState extends State<HealthWorkerDashboard> {
   bool _isOffline = false;
   final List<HealthRecord> _pendingRecords = [];
   final List<Map<String, dynamic>> _pendingReports = [];
+  String _filterStatus = 'All';
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = "";
 
-  // Mock Data (Baad mein Firebase se replace hoga)
-  final List<HealthRecord> mockPatients = [
-    HealthRecord(patientName: "Rahul Sharma", hr: "105 bpm", spo2: "94%", status: "Critical"),
-    HealthRecord(patientName: "Priya V.", hr: "72 bpm", spo2: "98%", status: "Normal"),
-    HealthRecord(patientName: "Amit Kumar", hr: "88 bpm", spo2: "96%", status: "Warning"),
-    HealthRecord(patientName: "Sunita Devi", hr: "68 bpm", spo2: "99%", status: "Normal"),
-  ];
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -216,7 +217,21 @@ class _HealthWorkerDashboardState extends State<HealthWorkerDashboard> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text("Community Triage", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-        Text("${mockPatients.length} Active Patients | ${_pendingRecords.length} Pending Sync", style: const TextStyle(color: Colors.grey)),
+        Text("${_pendingRecords.length} Pending Sync", style: const TextStyle(color: Colors.grey)),
+        const SizedBox(height: 20),
+
+        TextField(
+          controller: _searchController,
+          decoration: InputDecoration(
+            hintText: "Search patients...",
+            prefixIcon: const Icon(Icons.search),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            filled: true,
+            fillColor: Colors.white,
+            contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 15),
+          ),
+          onChanged: (val) => setState(() => _searchQuery = val.toLowerCase()),
+        ),
         const SizedBox(height: 20),
 
         _buildHardwareStatus(),
@@ -252,6 +267,21 @@ class _HealthWorkerDashboardState extends State<HealthWorkerDashboard> {
             ),
           ),
         ),
+        const SizedBox(height: 15),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              _buildFilterChip('All', Colors.blue),
+              const SizedBox(width: 10),
+              _buildFilterChip('Critical', Colors.red),
+              const SizedBox(width: 10),
+              _buildFilterChip('Pending', Colors.orange),
+              const SizedBox(width: 10),
+              _buildFilterChip('Ready', Colors.green),
+            ],
+          ),
+        ),
         const SizedBox(height: 25),
         Expanded(
           child: StreamBuilder<QuerySnapshot>(
@@ -260,9 +290,31 @@ class _HealthWorkerDashboardState extends State<HealthWorkerDashboard> {
               if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
               
               final docs = snapshot.data!.docs;
-              final pending = docs.where((d) => d['status'] == 'pending_review').toList();
-              final ready = docs.where((d) => d['status'] == 'reviewed').toList();
-              final completed = docs.where((d) {
+              
+              var filteredDocs = docs;
+              if (_searchQuery.isNotEmpty) {
+                filteredDocs = filteredDocs.where((d) {
+                  final data = d.data() as Map<String, dynamic>;
+                  final name = (data['patientName'] ?? '').toString().toLowerCase();
+                  return name.contains(_searchQuery);
+                }).toList();
+              }
+
+              if (_filterStatus == 'Critical') {
+                filteredDocs = filteredDocs.where((d) {
+                  final data = d.data() as Map<String, dynamic>;
+                  final results = data['results'] as Map<String, dynamic>? ?? {};
+                  return results['Severity'] == 'High';
+                }).toList();
+              } else if (_filterStatus == 'Pending') {
+                filteredDocs = filteredDocs.where((d) => d['status'] == 'pending_review').toList();
+              } else if (_filterStatus == 'Ready') {
+                filteredDocs = filteredDocs.where((d) => d['status'] == 'reviewed').toList();
+              }
+
+              final pending = filteredDocs.where((d) => d['status'] == 'pending_review').toList();
+              final ready = filteredDocs.where((d) => d['status'] == 'reviewed').toList();
+              final completed = filteredDocs.where((d) {
                 if (d['status'] != 'completed') return false;
                 final ts = (d['timestamp'] as Timestamp).toDate();
                 final now = DateTime.now();
@@ -289,30 +341,30 @@ class _HealthWorkerDashboardState extends State<HealthWorkerDashboard> {
                     ...completed.map((doc) => _buildReportCard(doc, false, isCompleted: true)),
                     const SizedBox(height: 20),
                   ],
-                  const Text("Community Queue", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 10),
-                  ...mockPatients.map((p) {
-                    Color statusColor = p.status == 'Critical' ? Colors.red : (p.status == 'Warning' ? Colors.orange : Colors.green);
-                    return Card(
-                      elevation: 0,
-                      margin: const EdgeInsets.only(bottom: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                      child: ListTile(
-                        contentPadding: const EdgeInsets.all(15),
-                        leading: CircleAvatar(backgroundColor: statusColor.withAlpha(26), child: Icon(Icons.person, color: statusColor)),
-                        title: Text(p.patientName, style: const TextStyle(fontWeight: FontWeight.bold)),
-                        subtitle: Text("HR: ${p.hr} | SpO2: ${p.spo2}"),
-                        trailing: IconButton(icon: const Icon(Icons.video_call, color: Colors.purple), onPressed: () => _initiateTeleconsultation(p)),
-                        onTap: () => _openDiagnosticKit(patientName: p.patientName),
-                      ),
-                    );
-                  }),
                 ],
               );
             },
           ),
         )
       ],
+    );
+  }
+
+  Widget _buildFilterChip(String label, Color color) {
+    bool isSelected = _filterStatus == label;
+    return ChoiceChip(
+      label: Text(label),
+      selected: isSelected,
+      onSelected: (bool selected) {
+        setState(() => _filterStatus = label);
+      },
+      selectedColor: color.withAlpha(50),
+      backgroundColor: Colors.white,
+      labelStyle: TextStyle(
+        color: isSelected ? color : Colors.black54,
+        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal
+      ),
+      side: BorderSide(color: isSelected ? color : Colors.grey.shade300),
     );
   }
 
@@ -330,35 +382,107 @@ class _HealthWorkerDashboardState extends State<HealthWorkerDashboard> {
         leading: CircleAvatar(backgroundColor: color.withAlpha(26), child: Icon(isCompleted ? Icons.check : Icons.medical_services, color: color)),
         title: Text(data['patientName'] ?? 'Unknown', style: TextStyle(fontWeight: FontWeight.bold, decoration: isCompleted ? TextDecoration.lineThrough : null)),
         subtitle: Text("Diagnosis: ${results['Diagnosis'] ?? '--'}"),
-        trailing: isActionable 
-          ? ElevatedButton(
-              onPressed: () => _showPrescriptionDialog(data['patientName'], data['prescription'] ?? data['referralLetter'] ?? "No details", doc.id),
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
-              child: const Text("Dispense"),
-            )
-          : (isCompleted ? const Icon(Icons.check_circle, color: Colors.green) : const Text("Waiting...", style: TextStyle(color: Colors.orange))),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.chat_bubble_outline, color: Colors.blue),
+              onPressed: () => _showChatDialog(doc.id, data['patientName'] ?? 'Unknown'),
+            ),
+            const SizedBox(width: 8),
+            if (isActionable)
+              ElevatedButton(
+                onPressed: () => _showPrescriptionDialog(data['patientName'], data['prescription'] ?? data['referralLetter'] ?? "No details", doc.id),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
+                child: const Text("Dispense"),
+              )
+            else
+              (isCompleted ? const Icon(Icons.check_circle, color: Colors.green) : const Text("Waiting...", style: TextStyle(color: Colors.orange))),
+          ],
+        ),
       ),
     );
   }
 
-  void _initiateTeleconsultation(HealthRecord p) {
+  void _showChatDialog(String reportId, String patientName) {
+    final TextEditingController msgController = TextEditingController();
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text("Connect with Doctor for ${p.patientName}?"),
-        content: const Text("This will initiate a secure video channel with the District Hospital."),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
-          ElevatedButton.icon(
-            onPressed: () {
-              Navigator.pop(ctx);
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Connecting to Dr. A. Singh (Cardiologist)...")));
-            },
-            icon: const Icon(Icons.videocam),
-            label: const Text("Start Call"),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.purple, foregroundColor: Colors.white),
-          )
-        ],
+        title: Text("Chat: $patientName"),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 400,
+          child: Column(
+            children: [
+              Expanded(
+                child: StreamBuilder<QuerySnapshot>(
+                  stream: FirebaseFirestore.instance
+                      .collection('diagnostic_reports')
+                      .doc(reportId)
+                      .collection('messages')
+                      .orderBy('timestamp', descending: true)
+                      .snapshots(),
+                  builder: (ctx, snapshot) {
+                    if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+                    final msgs = snapshot.data!.docs;
+                    if (msgs.isEmpty) return const Center(child: Text("No messages yet."));
+                    return ListView.builder(
+                      reverse: true,
+                      itemCount: msgs.length,
+                      itemBuilder: (ctx, i) {
+                        final m = msgs[i].data() as Map<String, dynamic>;
+                        final isMe = m['role'] == 'worker';
+                        return Align(
+                          alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+                          child: Container(
+                            margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: isMe ? Colors.blue.shade100 : Colors.grey.shade200,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(m['message'], style: const TextStyle(fontSize: 14)),
+                                Text(m['senderName'] ?? '', style: const TextStyle(fontSize: 10, color: Colors.black54)),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+              const Divider(),
+              Row(
+                children: [
+                  Expanded(child: TextField(controller: msgController, decoration: const InputDecoration(hintText: "Type a message..."))),
+                  IconButton(
+                    icon: const Icon(Icons.send),
+                    onPressed: () {
+                      if (msgController.text.trim().isEmpty) return;
+                      FirebaseFirestore.instance
+                          .collection('diagnostic_reports')
+                          .doc(reportId)
+                          .collection('messages')
+                          .add({
+                        'message': msgController.text.trim(),
+                        'senderName': widget.session.username,
+                        'role': 'worker',
+                        'timestamp': FieldValue.serverTimestamp(),
+                      });
+                      msgController.clear();
+                    },
+                  )
+                ],
+              )
+            ],
+          ),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Close"))],
       ),
     );
   }
@@ -411,21 +535,75 @@ class _HealthWorkerDashboardState extends State<HealthWorkerDashboard> {
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
           _buildStatusItem(Icons.power_settings_new, "ON", "Kit Status", Colors.green),
-          _buildStatusItem(Icons.science, "42", "Strips Left", Colors.blue),
+          _buildStatusItem(Icons.science, "42", "Strips Left", Colors.blue, onTap: _showRestockDialog),
           _buildStatusItem(Icons.build, "OK", "Calibration", Colors.orange),
         ],
       ),
     );
   }
 
-  Widget _buildStatusItem(IconData icon, String value, String label, Color color) {
-    return Column(
-      children: [
-        Icon(icon, color: color, size: 28),
-        const SizedBox(height: 5),
-        Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-        Text(label, style: const TextStyle(color: Colors.grey, fontSize: 12)),
-      ],
+  Widget _buildStatusItem(IconData icon, String value, String label, Color color, {VoidCallback? onTap}) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.all(8.0),
+        child: Column(
+          children: [
+            Icon(icon, color: color, size: 28),
+            const SizedBox(height: 5),
+            Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            Text(label, style: const TextStyle(color: Colors.grey, fontSize: 12)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showRestockDialog() {
+    final TextEditingController qtyController = TextEditingController();
+    String selectedItem = "Glucose Strips";
+    
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Request Supplies"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            DropdownButtonFormField<String>(
+              value: selectedItem,
+              items: ["Glucose Strips", "Urine Strips", "Lancets", "Batteries", "Sanitizer"]
+                  .map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
+              onChanged: (v) => selectedItem = v!,
+              decoration: const InputDecoration(labelText: "Item"),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: qtyController,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: "Quantity Needed"),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+          ElevatedButton(
+            onPressed: () {
+              FirebaseFirestore.instance.collection('inventory_requests').add({
+                'item': selectedItem,
+                'quantity': int.tryParse(qtyController.text) ?? 0,
+                'requestedAt': FieldValue.serverTimestamp(),
+                'status': 'pending',
+                'phcId': 'sector-4', // Mock ID
+              });
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Request Sent to Central Supply")));
+            },
+            child: const Text("Submit Request"),
+          )
+        ],
+      ),
     );
   }
 
