@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:intl/intl.dart'; // Add to pubspec.yaml: intl: ^0.19.0
 import '../../models/user_session.dart';
-import '../../models/patient_report.dart';
+import '../../models/health_record.dart';
+import 'dart:math';
 
 class DoctorDashboard extends StatefulWidget {
   final UserSession session;
@@ -19,374 +19,411 @@ class DoctorDashboard extends StatefulWidget {
 }
 
 class _DoctorDashboardState extends State<DoctorDashboard> {
-  String _selectedFilter = 'pending_review';
-  List<PatientReport> _reports = [];
-  List<PatientReport> _filteredReports = [];
-  int _pendingCount = 0;
-  int _criticalCount = 0;
-  bool _isLoading = true;
-  final TextEditingController _searchController = TextEditingController();
+  int _selectedIndex = 0;
+  late Stream<QuerySnapshot> _referralsStream;
+
+  // Mock Data for Doctor View
+  final List<HealthRecord> _allPatients = [
+    HealthRecord(patientName: "Rahul Sharma", hr: "105 bpm", spo2: "94%", status: "Critical"),
+    HealthRecord(patientName: "Amit Kumar", hr: "88 bpm", spo2: "96%", status: "Warning"),
+    HealthRecord(patientName: "Priya V.", hr: "72 bpm", spo2: "98%", status: "Normal"),
+    HealthRecord(patientName: "Sunita Devi", hr: "68 bpm", spo2: "99%", status: "Normal"),
+    HealthRecord(patientName: "John Doe", hr: "70 bpm", spo2: "98%", status: "Normal"),
+  ];
 
   @override
   void initState() {
     super.initState();
-    _searchController.addListener(_filterReports);
-    _loadData();
-  }
-
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
-  }
-
-  void _filterReports() {
-    final query = _searchController.text.toLowerCase();
-    setState(() {
-      _filteredReports = _reports.where((report) {
-        return report.patientName.toLowerCase().contains(query);
-      }).toList();
-    });
-  }
-
-  Future<void> _loadData() async {
-    if (!mounted) return;
-    setState(() => _isLoading = true);
-    try {
-      final pendingSnap = await FirebaseFirestore.instance.collection('diagnostic_reports').where('status', isEqualTo: 'pending_review').get();
-      
-      // Calculate critical cases client-side to avoid composite index error
-      int criticals = 0;
-      for (var doc in pendingSnap.docs) {
-        final data = doc.data();
-        if (data['results'] is Map && data['results']['Severity'] == 'High') {
-          criticals++;
-        }
-      }
-
-      // Remove orderBy to avoid composite index error, sort client-side instead
-      Query query = FirebaseFirestore.instance.collection('diagnostic_reports');
-      if (_selectedFilter != 'all') {
-        query = query.where('status', isEqualTo: _selectedFilter);
-      }
-      final reportsSnap = await query.get();
-
-      if (mounted) {
-        setState(() {
-          _pendingCount = pendingSnap.size;
-          _criticalCount = criticals;
-          _reports = reportsSnap.docs.map((doc) => PatientReport.fromFirestore(doc)).toList();
-          _reports.sort((a, b) => b.timestamp.compareTo(a.timestamp));
-          _filterReports();
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      debugPrint("Error loading data: $e");
-      if (mounted) setState(() => _isLoading = false);
-    }
+    _referralsStream = FirebaseFirestore.instance
+        .collection('diagnostic_reports')
+        .where('status', isEqualTo: 'pending_review')
+        .orderBy('timestamp', descending: true)
+        .snapshots();
   }
 
   @override
   Widget build(BuildContext context) {
+    final bool isMobile = MediaQuery.of(context).size.width < 900;
+
     return Scaffold(
-      backgroundColor: const Color(0xFFF1F5F9),
+      backgroundColor: const Color(0xFFF8F9FA),
       appBar: AppBar(
-        title: const Text("Doctor Portal"),
-        backgroundColor: Colors.blue[800],
-        foregroundColor: Colors.white,
+        title: const Text("Doctor Portal", style: TextStyle(fontWeight: FontWeight.bold)),
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+        elevation: 1,
         actions: [
-          IconButton(icon: const Icon(Icons.refresh), onPressed: _loadData),
-          IconButton(icon: const Icon(Icons.logout), onPressed: widget.onLogout),
+          IconButton(onPressed: () {}, icon: const Icon(Icons.notifications_outlined)),
+          IconButton(onPressed: widget.onLogout, icon: const Icon(Icons.logout)),
         ],
       ),
-      body: Column(
+      body: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildHeader(),
-          _buildSearchBar(),
-          _buildFilterChips(),
-          Expanded(child: _buildReportsList()),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildHeader() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      color: Colors.white,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
-        children: [
-          _buildStatCard(
-            "Pending Review",
-            _pendingCount,
-            Colors.orange,
-          ),
-          _buildStatCard(
-            "Critical Cases",
-            _criticalCount,
-            Colors.red,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStatCard(String title, int count, Color color) {
-    return Expanded(
-      child: Card(
-        color: color.withOpacity(0.1),
-        elevation: 0,
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            children: [
-              Text(
-                count.toString(),
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: color),
-              ),
-              const SizedBox(height: 4),
-              Text(title, style: TextStyle(fontSize: 12, color: color)),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSearchBar() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-      child: TextField(
-        controller: _searchController,
-        decoration: InputDecoration(
-          hintText: "Search by patient name...",
-          prefixIcon: const Icon(Icons.search),
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-          contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 16),
-          filled: true,
-          fillColor: Colors.white,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFilterChips() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 12.0),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            FilterChip(
-              label: const Text("Pending Review"),
-              selected: _selectedFilter == 'pending_review',
-              onSelected: (val) {
-                setState(() => _selectedFilter = 'pending_review');
-                _loadData();
-              },
-              selectedColor: Colors.orange[200],
-            ),
-            const SizedBox(width: 8),
-            FilterChip(
-              label: const Text("Reviewed"),
-              selected: _selectedFilter == 'reviewed',
-              onSelected: (val) {
-                setState(() => _selectedFilter = 'reviewed');
-                _loadData();
-              },
-              selectedColor: Colors.green[200],
-            ),
-            const SizedBox(width: 8),
-            FilterChip(
-              label: const Text("All Reports"),
-              selected: _selectedFilter == 'all',
-              onSelected: (val) {
-                setState(() => _selectedFilter = 'all');
-                _loadData();
-              },
-              selectedColor: Colors.blue[200],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildReportsList() {
-    if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (_filteredReports.isEmpty) {
-      return Center(child: Text("No reports found for this filter.", style: TextStyle(color: Colors.grey[600])));
-    }
-
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: _filteredReports.length,
-      itemBuilder: (context, index) {
-        final report = _filteredReports[index];
-        final severity = report.results['Severity'] ?? 'Low';
-        Color statusColor = severity == 'High' ? Colors.red : (severity == 'Moderate' ? Colors.orange : Colors.green);
-
-        return Card(
-          elevation: 2,
-          margin: const EdgeInsets.only(bottom: 12),
-          shape: RoundedRectangleBorder(
-            side: BorderSide(color: statusColor.withOpacity(0.5), width: 1),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(12.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(report.patientName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                    Text(DateFormat('d MMM, h:mm a').format(report.timestamp), style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                  ],
-                ),
-                const Divider(height: 16),
-                Text.rich(
-                  TextSpan(
-                    style: const TextStyle(color: Colors.black87, height: 1.5),
-                    children: [
-                      const TextSpan(text: "AI Diagnosis: ", style: TextStyle(fontWeight: FontWeight.bold)),
-                      TextSpan(text: "${report.results['Diagnosis'] ?? 'N/A'} "),
-                      TextSpan(text: "($severity)", style: TextStyle(color: statusColor, fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                ),
-                    const SizedBox(height: 8),
-                    if (report.results.entries.any((e) => e.key != 'Diagnosis' && e.key != 'Severity'))
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text("Vitals & Details:", style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                          const SizedBox(height: 4),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: report.results.entries
-                                .where((e) => e.key != 'Diagnosis' && e.key != 'Severity')
-                                .map((e) => Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                      decoration: BoxDecoration(
-                                        color: Colors.grey[100],
-                                        borderRadius: BorderRadius.circular(4),
-                                        border: Border.all(color: Colors.grey[300]!),
-                                      ),
-                                      child: Text("${e.key}: ${e.value}", style: const TextStyle(fontSize: 12)),
-                                    ))
-                                .toList(),
-                          ),
-                        ],
-                      ),
-                const SizedBox(height: 12),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    if (report.status == 'pending_review')
-                      TextButton.icon(
-                        onPressed: () => _markAsReviewed(report.id),
-                        icon: const Icon(Icons.check_circle_outline, size: 18),
-                        label: const Text("Mark Reviewed"),
-                      ),
-                    const SizedBox(width: 8),
-                    ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[600], foregroundColor: Colors.white),
-                      icon: const Icon(Icons.edit_note, size: 18),
-                      label: const Text("Prescribe"),
-                      onPressed: () => _showPrescriptionDialog(context, report),
-                    ),
-                  ],
-                ),
+          if (!isMobile) ...[
+            NavigationRail(
+              selectedIndex: _selectedIndex,
+              onDestinationSelected: (int index) => setState(() => _selectedIndex = index),
+              labelType: NavigationRailLabelType.all,
+              destinations: const [
+                NavigationRailDestination(icon: Icon(Icons.dashboard), label: Text('Dashboard')),
+                NavigationRailDestination(icon: Icon(Icons.people), label: Text('Patients')),
+                NavigationRailDestination(icon: Icon(Icons.map), label: Text('Map')),
+                NavigationRailDestination(icon: Icon(Icons.calendar_month), label: Text('Schedule')),
               ],
             ),
+            const VerticalDivider(thickness: 1, width: 1),
+          ],
+          Expanded(
+            child: _buildContent(),
           ),
+        ],
+      ),
+      bottomNavigationBar: isMobile
+          ? BottomNavigationBar(
+              currentIndex: _selectedIndex,
+              onTap: (int index) => setState(() => _selectedIndex = index),
+              type: BottomNavigationBarType.fixed,
+              items: const [
+                BottomNavigationBarItem(icon: Icon(Icons.dashboard), label: 'Dashboard'),
+                BottomNavigationBarItem(icon: Icon(Icons.people), label: 'Patients'),
+                BottomNavigationBarItem(icon: Icon(Icons.map), label: 'Map'),
+                BottomNavigationBarItem(icon: Icon(Icons.calendar_month), label: 'Schedule'),
+              ],
+            )
+          : null,
+    );
+  }
+
+  Widget _buildContent() {
+    switch (_selectedIndex) {
+      case 0: return _buildDashboardView();
+      case 1: return _buildAllPatientsView();
+      case 2: return _buildMapView();
+      case 3: return _buildScheduleView();
+      default: return _buildDashboardView();
+    }
+  }
+
+  Widget _buildDashboardView() {
+    final bool isMobile = MediaQuery.of(context).size.width < 900;
+
+    return StreamBuilder<QuerySnapshot>(
+      stream: _referralsStream,
+      builder: (context, snapshot) {
+        int pendingCount = 0;
+        int criticalCount = 0;
+        List<QueryDocumentSnapshot> docs = [];
+
+        if (snapshot.hasError) {
+          return Center(child: Text("Error loading data: ${snapshot.error}", style: const TextStyle(color: Colors.red)));
+        }
+
+        if (snapshot.hasData) {
+          docs = snapshot.data!.docs;
+          pendingCount = docs.length;
+          criticalCount = docs.where((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            return data['results']?['Severity'] == 'High';
+          }).length;
+        }
+
+        Widget statsSection = Column(
+          children: [
+            _buildStatCard("Pending Reviews", "$pendingCount", Colors.orange),
+            const SizedBox(height: 15),
+            _buildStatCard("Completed Today", "12", Colors.green),
+            const SizedBox(height: 15),
+            _buildStatCard("Critical Alerts", "$criticalCount", Colors.red),
+          ],
+        );
+
+        Widget mainContentSection = Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text("Urgent Referrals", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 15),
+            Expanded(
+              child: snapshot.connectionState == ConnectionState.waiting
+                  ? const Center(child: CircularProgressIndicator())
+                  : (docs.isEmpty
+                      ? const Center(child: Text("No pending referrals"))
+                      : ListView.builder(
+                          itemCount: docs.length,
+                          itemBuilder: (context, index) {
+                            final doc = docs[index];
+                            final data = doc.data() as Map<String, dynamic>;
+                            final results = data['results'] as Map<String, dynamic>? ?? {};
+                            
+                            final String name = data['patientName'] ?? 'Unknown';
+                            final String hr = results['Heart Rate'] ?? '--';
+                            final String spo2 = results['SpO2'] ?? '--';
+                            final String severity = results['Severity'] ?? 'Unknown';
+                            
+                            Color statusColor = severity == 'High' ? Colors.red : (severity == 'Moderate' ? Colors.orange : Colors.green);
+
+                            return Card(
+                              margin: const EdgeInsets.only(bottom: 15),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              child: Padding(
+                                padding: const EdgeInsets.all(15),
+                                child: Row(
+                                  children: [
+                                    CircleAvatar(
+                                      backgroundColor: statusColor.withOpacity(0.1),
+                                      child: Text(name.isNotEmpty ? name[0] : '?', style: TextStyle(color: statusColor, fontWeight: FontWeight.bold)),
+                                    ),
+                                    const SizedBox(width: 15),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                                          Text("Vitals: HR $hr | SpO2 $spo2", style: const TextStyle(color: Colors.grey)),
+                                          Text("Status: $severity", style: TextStyle(color: statusColor, fontWeight: FontWeight.bold, fontSize: 12)),
+                                        ],
+                                      ),
+                                    ),
+                                    ElevatedButton(
+                                      onPressed: () => _openPatientReview(doc.id, data),
+                                      style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white),
+                                      child: const Text("Review"),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        )),
+            ),
+          ],
+        );
+
+        return Padding(
+          padding: const EdgeInsets.all(20.0),
+          child: isMobile
+              ? Column(
+                  children: [
+                    statsSection,
+                    const SizedBox(height: 20),
+                    Expanded(child: mainContentSection),
+                  ],
+                )
+              : Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(flex: 1, child: statsSection),
+                    const SizedBox(width: 20),
+                    Expanded(flex: 3, child: mainContentSection),
+                  ],
+                ),
         );
       },
     );
   }
 
-  void _showPrescriptionDialog(BuildContext context, PatientReport report) {
-    final TextEditingController controller = TextEditingController();
+  Widget _buildAllPatientsView() {
+    return ListView.builder(
+      padding: const EdgeInsets.all(20),
+      itemCount: _allPatients.length,
+      itemBuilder: (context, index) {
+        final p = _allPatients[index];
+        return ListTile(
+          leading: CircleAvatar(child: Text(p.patientName[0])),
+          title: Text(p.patientName),
+          subtitle: Text("Status: ${p.status}"),
+          trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+          onTap: () {},
+        );
+      },
+    );
+  }
 
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-        title: Row(
-          children: [
-            const Icon(Icons.medical_services, color: Colors.blue),
-            const SizedBox(width: 10),
-            Expanded(child: Text("Rx: ${report.patientName}", style: const TextStyle(fontSize: 18))),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text("Enter medicines & instructions:", style: TextStyle(fontSize: 12, color: Colors.grey[700])),
-            const SizedBox(height: 8),
-            TextField(
-              controller: controller,
-              maxLines: 5,
-              autofocus: true,
-              decoration: InputDecoration(
-                hintText: "e.g., Tab. Paracetamol 500mg BD...",
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                filled: true,
-                fillColor: Colors.blue[50],
+  Widget _buildMapView() {
+    return Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text("Disease Outbreak Map", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 20),
+          Expanded(
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.blue.shade50,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: Colors.blue.shade100),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(20),
+                child: CustomPaint(
+                  painter: _MapPainter(_allPatients),
+                  child: Container(),
+                ),
               ),
             ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text("Cancel"),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              if (controller.text.isNotEmpty) {
-                _sendPrescriptionToCloud(report, controller.text);
-                Navigator.pop(ctx);
-              }
-            },
-            child: const Text("Send to PHC"),
           ),
         ],
       ),
     );
   }
 
-  Future<void> _sendPrescriptionToCloud(PatientReport report, String prescription) async {
-    await FirebaseFirestore.instance.collection('prescriptions').add({
-      'patientName': report.patientName,
-      'prescription': prescription,
-      'doctorName': widget.session.name,
-      'timestamp': FieldValue.serverTimestamp(),
-      'status': 'pending_dispense',
-    });
+  Widget _buildScheduleView() {
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: const [
+        Text("Upcoming Appointments", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+        SizedBox(height: 20),
+        ListTile(
+          leading: Icon(Icons.access_time, color: Colors.blue),
+          title: Text("Follow-up: Rahul Sharma"),
+          subtitle: Text("Today, 2:00 PM - Video Call"),
+        ),
+        ListTile(
+          leading: Icon(Icons.access_time, color: Colors.blue),
+          title: Text("Consultation: Priya V."),
+          subtitle: Text("Tomorrow, 10:00 AM - In Person"),
+        ),
+      ],
+    );
+  }
 
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Prescription sent for ${report.patientName}")),
-      );
+  Widget _buildStatCard(String title, String value, Color color) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10)],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(value, style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: color)),
+          const SizedBox(height: 5),
+          Text(title, style: const TextStyle(color: Colors.grey, fontSize: 14)),
+        ],
+      ),
+    );
+  }
+
+  void _openPatientReview(String docId, Map<String, dynamic> data) {
+    final TextEditingController prescriptionCtrl = TextEditingController();
+    final results = data['results'] as Map<String, dynamic>? ?? {};
+    final String name = data['patientName'] ?? 'Unknown';
+    final String diagnosis = results['Diagnosis'] ?? 'No diagnosis';
+    final String hr = results['Heart Rate'] ?? '--';
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text("Review: $name"),
+        content: SizedBox(
+          width: 500,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(8)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.warning, color: Colors.red),
+                        const SizedBox(width: 10),
+                        Expanded(child: Text("AI Insight: $diagnosis", style: TextStyle(color: Colors.red.shade900, fontWeight: FontWeight.bold))),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    const Divider(color: Colors.red),
+                    ...results.entries.map((e) => Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(e.key, style: const TextStyle(fontSize: 13)),
+                          Text(e.value.toString(), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                        ],
+                      ),
+                    )),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+              const Text("Prescription / Advice:", style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 10),
+              TextField(
+                controller: prescriptionCtrl,
+                maxLines: 4,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  hintText: "Enter medication, dosage, and instructions...",
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          OutlinedButton.icon(
+            onPressed: () {
+               Navigator.pop(context);
+               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Calling PHC Worker...")));
+            },
+            icon: const Icon(Icons.video_call),
+            label: const Text("Video Call"),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              // Update Firestore
+              FirebaseFirestore.instance.collection('diagnostic_reports').doc(docId).update({
+                'status': 'reviewed',
+                'prescription': prescriptionCtrl.text,
+                'reviewedAt': FieldValue.serverTimestamp(),
+              });
+              Navigator.pop(context);
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Prescription Sent to PHC!")));
+            },
+            child: const Text("Send Prescription"),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MapPainter extends CustomPainter {
+  final List<HealthRecord> patients;
+  _MapPainter(this.patients);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..style = PaintingStyle.fill;
+    final random = Random(42);
+
+    final gridPaint = Paint()..color = Colors.blue.withOpacity(0.1)..strokeWidth = 1;
+    for(double i=0; i<size.width; i+=40) {
+      canvas.drawLine(Offset(i, 0), Offset(i, size.height), gridPaint);
+    }
+    for(double i=0; i<size.height; i+=40) {
+      canvas.drawLine(Offset(0, i), Offset(size.width, i), gridPaint);
+    }
+
+    for (var p in patients) {
+      final x = random.nextDouble() * size.width;
+      final y = random.nextDouble() * size.height;
+      Color color = p.status == 'Critical' ? Colors.red : (p.status == 'Warning' ? Colors.orange : Colors.green);
+      paint.color = color.withOpacity(0.6);
+      canvas.drawCircle(Offset(x, y), 15, paint);
+      paint.color = color;
+      canvas.drawCircle(Offset(x, y), 6, paint);
     }
   }
 
-  Future<void> _markAsReviewed(String reportId) async {
-    await FirebaseFirestore.instance.collection('diagnostic_reports').doc(reportId).update({'status': 'reviewed'});
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Report marked as reviewed."), backgroundColor: Colors.green),
-      );
-      _loadData();
-    }
-  }
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

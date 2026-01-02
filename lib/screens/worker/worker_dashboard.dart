@@ -72,16 +72,20 @@ class _HealthWorkerDashboardState extends State<HealthWorkerDashboard> {
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 1000),
-            child: _selectedIndex == 0 ? _buildPatientList() : _buildGeoMap(),
+            child: _buildBodyContent(),
           ),
         ),
       ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _selectedIndex,
         onTap: (idx) => setState(() => _selectedIndex = idx),
+        type: BottomNavigationBarType.fixed,
+        selectedItemColor: const Color(0xFF09E5AB),
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.list), label: "Patients"),
           BottomNavigationBarItem(icon: Icon(Icons.map), label: "Disease Map"),
+          BottomNavigationBarItem(icon: Icon(Icons.video_library), label: "Education"),
+          BottomNavigationBarItem(icon: Icon(Icons.history), label: "History"),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
@@ -117,6 +121,102 @@ class _HealthWorkerDashboardState extends State<HealthWorkerDashboard> {
     );
   }
 
+  Widget _buildBodyContent() {
+    switch (_selectedIndex) {
+      case 0: return _buildPatientList();
+      case 1: return _buildGeoMap();
+      case 2: return _buildEducationHub();
+      case 3: return _buildHistoryView();
+      default: return _buildPatientList();
+    }
+  }
+
+  Widget _buildHistoryView() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text("Diagnostic History", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+        const Text("Past reports and uploads", style: TextStyle(color: Colors.grey)),
+        const SizedBox(height: 20),
+        Expanded(
+          child: StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance.collection('diagnostic_reports').orderBy('timestamp', descending: true).snapshots(),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+              final docs = snapshot.data!.docs;
+              if (docs.isEmpty) return const Center(child: Text("No history found"));
+
+              return ListView.builder(
+                itemCount: docs.length,
+                itemBuilder: (context, index) {
+                  final data = docs[index].data() as Map<String, dynamic>;
+                  final results = data['results'] as Map<String, dynamic>? ?? {};
+                  final timestamp = (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now();
+                  
+                  return Card(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    child: ExpansionTile(
+                      leading: CircleAvatar(
+                        backgroundColor: Colors.blue.shade50,
+                        child: const Icon(Icons.assignment, color: Colors.blue),
+                      ),
+                      title: Text(data['patientName'] ?? 'Unknown', style: const TextStyle(fontWeight: FontWeight.bold)),
+                      subtitle: Text("Date: ${timestamp.toString().split('.')[0]}"),
+                      trailing: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: (data['status'] == 'reviewed') ? Colors.green.withOpacity(0.1) : Colors.orange.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(8)
+                        ),
+                        child: Text(
+                          data['status']?.toUpperCase() ?? 'PENDING',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold, 
+                            fontSize: 10,
+                            color: (data['status'] == 'reviewed') ? Colors.green : Colors.orange
+                          )
+                        ),
+                      ),
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.all(15),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text("Vitals & Results:", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
+                              const SizedBox(height: 5),
+                              ...results.entries.map((e) => Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 2),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(e.key),
+                                    Text(e.value.toString(), style: const TextStyle(fontWeight: FontWeight.bold)),
+                                  ],
+                                ),
+                              )),
+                              if (data['prescription'] != null) ...[
+                                const Divider(),
+                                const Text("Doctor's Note:", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue)),
+                                const SizedBox(height: 5),
+                                Text(data['prescription']),
+                              ]
+                            ],
+                          ),
+                        )
+                      ],
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildPatientList() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -124,6 +224,7 @@ class _HealthWorkerDashboardState extends State<HealthWorkerDashboard> {
         const Text("Community Triage", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
         Text("${mockPatients.length} Active Patients | ${_pendingRecords.length} Pending Sync", style: const TextStyle(color: Colors.grey)),
         const SizedBox(height: 20),
+
         _buildHardwareStatus(),
         // New Diagnostic Kit Card
         GestureDetector(
@@ -159,81 +260,178 @@ class _HealthWorkerDashboardState extends State<HealthWorkerDashboard> {
         ),
         const SizedBox(height: 25),
         Expanded(
-          child: ListView.builder(
-            itemCount: mockPatients.length,
-            itemBuilder: (context, index) {
-              final p = mockPatients[index];
-              Color statusColor = p.status == 'Critical' 
-                  ? Colors.red 
-                  : (p.status == 'Warning' ? Colors.orange : Colors.green);
-              
-              return Card(
-                elevation: 0,
-                margin: const EdgeInsets.only(bottom: 12),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                child: ListTile(
-                  contentPadding: const EdgeInsets.all(15),
-                  leading: CircleAvatar(
-                    backgroundColor: statusColor.withOpacity(0.1),
-                    child: Icon(Icons.person, color: statusColor),
-                  ),
-                  title: Text(p.patientName, style: const TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle: Text("HR: ${p.hr} | SpO2: ${p.spo2}"),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (_doctorPrescriptions.containsKey(p.patientName))
-                        IconButton(
-                          icon: const Icon(Icons.description_outlined, color: Colors.blue),
-                          onPressed: () => _showPrescriptionDialog(p.patientName, _doctorPrescriptions[p.patientName]!),
-                        ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                        decoration: BoxDecoration(color: statusColor.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
-                        child: Text(p.status.toUpperCase(), style: TextStyle(color: statusColor, fontSize: 10, fontWeight: FontWeight.bold)),
+          child: StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance
+                .collection('diagnostic_reports')
+                .where('status', isEqualTo: 'reviewed')
+                .snapshots(),
+            builder: (context, snapshot) {
+              final Map<String, String> livePrescriptions = {};
+              final Map<String, String> liveReferrals = {};
+              if (snapshot.hasData) {
+                for (var doc in snapshot.data!.docs) {
+                  final data = doc.data() as Map<String, dynamic>;
+                  if (data['patientName'] != null) {
+                    if (data['prescription'] != null) livePrescriptions[data['patientName']] = data['prescription'];
+                    if (data['referralLetter'] != null) liveReferrals[data['patientName']] = data['referralLetter'];
+                  }
+                }
+              }
+
+              return ListView.builder(
+                itemCount: mockPatients.length,
+                itemBuilder: (context, index) {
+                  final p = mockPatients[index];
+                  Color statusColor = p.status == 'Critical' 
+                      ? Colors.red 
+                      : (p.status == 'Warning' ? Colors.orange : Colors.green);
+                  
+                  // Check for live prescription first, then fallback to mock
+                  final String? prescription = livePrescriptions[p.patientName] ?? _doctorPrescriptions[p.patientName];
+                  final String? referral = liveReferrals[p.patientName];
+
+                  return Card(
+                    elevation: 0,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                    child: ListTile(
+                      contentPadding: const EdgeInsets.all(15),
+                      leading: CircleAvatar(
+                        backgroundColor: statusColor.withOpacity(0.1),
+                        child: Icon(Icons.person, color: statusColor),
                       ),
-                    ],
-                  ),
-                  onTap: () {
-                    if (_isOffline) {
-                      // Simulate adding a record offline
-                      setState(() {
-                        _pendingRecords.add(p);
-                      });
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Vitals recorded locally. Sync when online.")));
-                    } else {
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Opening Patient Details...")));
-                    }
-                  },
-                ),
+                      title: Text(p.patientName, style: const TextStyle(fontWeight: FontWeight.bold)),
+                      subtitle: Text("HR: ${p.hr} | SpO2: ${p.spo2}"),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (prescription != null)
+                            IconButton(
+                              icon: const Icon(Icons.description_outlined, color: Colors.blue),
+                              onPressed: () => _showPrescriptionDialog(p.patientName, prescription),
+                            ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                            decoration: BoxDecoration(color: statusColor.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
+                            child: Text(p.status.toUpperCase(), style: TextStyle(color: statusColor, fontSize: 10, fontWeight: FontWeight.bold)),
+                          ),
+                          if (referral != null)
+                            IconButton(
+                              icon: const Icon(Icons.assignment_late, color: Colors.red),
+                              onPressed: () => _showPrescriptionDialog(p.patientName, referral),
+                            )
+                          else
+                            IconButton(
+                              icon: const Icon(Icons.assignment_late_outlined, color: Colors.orange),
+                              onPressed: () => _showReferralDialog(p),
+                            ),
+                          IconButton(
+                            icon: const Icon(Icons.video_call, color: Colors.purple),
+                            onPressed: () => _initiateTeleconsultation(p),
+                          ),
+                        ],
+                      ),
+                      onTap: () {
+                        if (_isOffline) {
+                          // Simulate adding a record offline
+                          setState(() {
+                            _pendingRecords.add(p);
+                          });
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Vitals recorded locally. Sync when online.")));
+                        } else {
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Opening Patient Details...")));
+                        }
+                      },
+                    ),
+                  );
+                },
               );
-            },
+            }
           ),
         )
       ],
     );
   }
 
+  void _initiateTeleconsultation(HealthRecord p) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text("Connect with Doctor for ${p.patientName}?"),
+        content: const Text("This will initiate a secure video channel with the District Hospital."),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Connecting to Dr. A. Singh (Cardiologist)...")));
+            },
+            icon: const Icon(Icons.videocam),
+            label: const Text("Start Call"),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.purple, foregroundColor: Colors.white),
+          )
+        ],
+      ),
+    );
+  }
+
+  void _showReferralDialog(HealthRecord p) {
+    if (p.status != 'Critical') {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Referral generation is only for Critical patients."), backgroundColor: Colors.orange));
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(children: [Icon(Icons.local_hospital, color: Colors.red), SizedBox(width: 10), Text("Referral Letter")]),
+        content: Text(
+          "To: District Medical Officer\n"
+          "From: PHC Sector 4\n"
+          "Date: ${DateTime.now().toString().split('.')[0]}\n\n"
+          "Patient: ${p.patientName}\n"
+          "Status: ${p.status}\n"
+          "Vitals: HR ${p.hr}, SpO2 ${p.spo2}\n\n"
+          "Reason: Patient requires further evaluation.",
+          style: const TextStyle(fontFamily: 'Monospace', fontSize: 12),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Close")),
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Referral Letter Shared via WhatsApp")));
+            },
+            icon: const Icon(Icons.share),
+            label: const Text("Share"),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white),
+          )
+        ],
+      ),
+    );
+  }
+
   void _showPrescriptionDialog(String patientName, String prescription) {
+    bool isReferral = prescription.contains("To: District Medical Officer");
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Row(
           children: [
-            const Icon(Icons.medical_services, color: Colors.blue),
+            Icon(isReferral ? Icons.assignment_late : Icons.medical_services, color: isReferral ? Colors.red : Colors.blue),
             const SizedBox(width: 10),
-            Expanded(child: Text("Rx: $patientName", style: const TextStyle(fontSize: 18))),
+            Expanded(child: Text("${isReferral ? 'Referral' : 'Rx'}: $patientName", style: const TextStyle(fontSize: 18))),
           ],
         ),
         content: Container(
           width: double.maxFinite,
           padding: const EdgeInsets.all(15),
-          decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(10)),
+          decoration: BoxDecoration(color: isReferral ? Colors.red.shade50 : Colors.blue.shade50, borderRadius: BorderRadius.circular(10)),
           child: Text(prescription, style: const TextStyle(fontSize: 16, height: 1.5)),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Close")),
-          ElevatedButton(onPressed: () => Navigator.pop(ctx), child: const Text("Dispense Meds")),
+          ElevatedButton(onPressed: () => Navigator.pop(ctx), child: Text(isReferral ? "Share / Print" : "Dispense Meds")),
         ],
       ),
     );
@@ -341,6 +539,71 @@ class _HealthWorkerDashboardState extends State<HealthWorkerDashboard> {
       ],
     );
   }
+
+  Widget _buildEducationHub() {
+    final List<Map<String, String>> videos = [
+      {"title": "Prenatal Care Basics", "duration": "5:30", "category": "Maternal"},
+      {"title": "Managing Hypertension", "duration": "4:15", "category": "Chronic"},
+      {"title": "Hygiene & Sanitation", "duration": "3:45", "category": "General"},
+      {"title": "Vaccination Schedule", "duration": "6:10", "category": "Pediatric"},
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text("Patient Education Hub", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+        const Text("Educational materials for community awareness", style: TextStyle(color: Colors.grey)),
+        const SizedBox(height: 20),
+        Expanded(
+          child: GridView.builder(
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              crossAxisSpacing: 15,
+              mainAxisSpacing: 15,
+              childAspectRatio: 1.3,
+            ),
+            itemCount: videos.length,
+            itemBuilder: (context, index) {
+              final v = videos[index];
+              return Card(
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Container(
+                        decoration: const BoxDecoration(
+                          color: Colors.black12,
+                          borderRadius: BorderRadius.vertical(top: Radius.circular(15)),
+                        ),
+                        child: const Center(child: Icon(Icons.play_circle_fill, size: 50, color: Colors.white)),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.all(10),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(v['title']!, style: const TextStyle(fontWeight: FontWeight.bold)),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(v['category']!, style: const TextStyle(color: Colors.blue, fontSize: 12)),
+                              Text(v['duration']!, style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                            ],
+                          )
+                        ],
+                      ),
+                    )
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _MapPainter extends CustomPainter {
@@ -396,6 +659,7 @@ class _DiagnosticKitOverlayState extends State<_DiagnosticKitOverlay> {
   int _step = 0;
   String _status = "Connecting to HD009 Kit...";
   Map<String, dynamic> _results = {};
+  String? _generatedReferralLetter;
 
   @override
   void initState() {
@@ -420,6 +684,7 @@ class _DiagnosticKitOverlayState extends State<_DiagnosticKitOverlay> {
       int sys = 100 + random.nextInt(60); // Range: 100 - 160
       int dia = 60 + random.nextInt(40); // Range: 60 - 100
       int spo2 = 92 + random.nextInt(8); // Range: 92 - 100
+      int hr = 60 + random.nextInt(40); // Range: 60 - 100
       bool proteinPos = random.nextDouble() > 0.7; // 30% chance of positive
 
       // Edge AI Logic: Interpret results instantly
@@ -440,6 +705,7 @@ class _DiagnosticKitOverlayState extends State<_DiagnosticKitOverlay> {
           'Glucose': '$glucose mg/dL',
           'Urine Protein': proteinPos ? '++' : 'Negative',
           'Blood Pressure': '$sys/$dia mmHg',
+          'Heart Rate': '$hr bpm',
           'SpO2': '$spo2%',
           'Diagnosis': diagnosis,
           'Severity': severity,
@@ -495,52 +761,53 @@ class _DiagnosticKitOverlayState extends State<_DiagnosticKitOverlay> {
                       ],
                     ),
                   ),
-                  if (isCritical) ...[
-                    const SizedBox(height: 15),
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: _generateReferral,
-                        icon: const Icon(Icons.assignment_late, color: Colors.red),
-                        label: const Text("Generate Urgent Referral", style: TextStyle(color: Colors.red)),
-                        style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.red), padding: const EdgeInsets.symmetric(vertical: 12)),
-                      ),
-                    ),
-                  ],
                 ],
               ),
             ),
             const SizedBox(height: 20),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: () async {
-                  // Upload to Cloud
-                  final reportData = {
-                    'patientName': widget.patientName ?? 'Unknown (Walk-in)',
-                    'results': _results,
-                    'timestamp': DateTime.now(), // Use local time initially
-                    'status': 'pending_review'
-                  };
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _generateReferral,
+                    icon: const Icon(Icons.assignment_late, color: Colors.red),
+                    label: const Text("Referral", style: TextStyle(color: Colors.red)),
+                    style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.red), padding: const EdgeInsets.symmetric(vertical: 15)),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: () async {
+                      // Upload to Cloud
+                      final reportData = {
+                        'patientName': widget.patientName ?? 'Unknown (Walk-in)',
+                        'results': _results,
+                        'timestamp': DateTime.now(), // Use local time initially
+                        'referralLetter': _generatedReferralLetter,
+                        'status': 'pending_review'
+                      };
 
-                  if (widget.isOffline) {
-                    widget.onSaveOffline(reportData);
-                    if(mounted) {
-                      Navigator.pop(context);
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Report Saved Locally (Offline Mode)")));
-                    }
-                  } else {
-                    await FirebaseFirestore.instance.collection('diagnostic_reports').add(reportData);
-                    if(mounted) {
-                      Navigator.pop(context);
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Report Sent to Doctor for Confirmation")));
-                    }
-                  }
-                },
-                icon: const Icon(Icons.cloud_upload),
-                label: const Text("Upload to Specialist"),
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF09E5AB), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 15)),
-              ),
+                      if (widget.isOffline) {
+                        widget.onSaveOffline(reportData);
+                        if(mounted) {
+                          Navigator.pop(context);
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Report Saved Locally (Offline Mode)")));
+                        }
+                      } else {
+                        await FirebaseFirestore.instance.collection('diagnostic_reports').add(reportData);
+                        if(mounted) {
+                          Navigator.pop(context);
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Report Sent to Doctor for Confirmation")));
+                        }
+                      }
+                    },
+                    icon: const Icon(Icons.cloud_upload),
+                    label: const Text("Upload"),
+                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF09E5AB), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 15)),
+                  ),
+                ),
+              ],
             )
           ]
         ],
@@ -562,12 +829,12 @@ class _DiagnosticKitOverlayState extends State<_DiagnosticKitOverlay> {
   }
 
   void _generateReferral() {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Row(children: [Icon(Icons.local_hospital, color: Colors.red), SizedBox(width: 10), Text("Referral Letter")]),
-        content: SingleChildScrollView(
-          child: Text(
+    if (_results['Severity'] != 'High') {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Referral generation is restricted to Critical/High severity cases."), backgroundColor: Colors.orange));
+      return;
+    }
+
+    final String letter = 
             "To: District Medical Officer\n"
             "From: PHC Sector 4\n"
             "Date: ${DateTime.now().toString().split('.')[0]}\n\n"
@@ -578,19 +845,28 @@ class _DiagnosticKitOverlayState extends State<_DiagnosticKitOverlay> {
             "- BP: ${_results['Blood Pressure']}\n"
             "- SpO2: ${_results['SpO2']}\n"
             "- Glucose: ${_results['Glucose']}\n\n"
-            "Immediate attention required.",
-            style: const TextStyle(fontFamily: 'Monospace', fontSize: 12),
-          ),
+            "Immediate attention required.";
+
+    setState(() {
+      _generatedReferralLetter = letter;
+    });
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(children: [Icon(Icons.local_hospital, color: Colors.red), SizedBox(width: 10), Text("Referral Letter")]),
+        content: SingleChildScrollView(
+          child: Text(letter, style: const TextStyle(fontFamily: 'Monospace', fontSize: 12)),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Close")),
           ElevatedButton.icon(
             onPressed: () {
               Navigator.pop(ctx);
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Referral Letter Shared via WhatsApp")));
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Referral Attached to Report")));
             },
-            icon: const Icon(Icons.share),
-            label: const Text("Share"),
+            icon: const Icon(Icons.attach_file),
+            label: const Text("Attach"),
             style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white),
           )
         ],
