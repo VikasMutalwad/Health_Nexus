@@ -23,20 +23,15 @@ class _HealthWorkerDashboardState extends State<HealthWorkerDashboard> {
   bool _isOffline = false;
   final List<HealthRecord> _pendingRecords = [];
   final List<Map<String, dynamic>> _pendingReports = [];
+  String _filterStatus = 'All';
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = "";
 
-  // Mock Data (Baad mein Firebase se replace hoga)
-  final List<HealthRecord> mockPatients = [
-    HealthRecord(patientName: "Rahul Sharma", hr: "105 bpm", spo2: "94%", status: "Critical"),
-    HealthRecord(patientName: "Priya V.", hr: "72 bpm", spo2: "98%", status: "Normal"),
-    HealthRecord(patientName: "Amit Kumar", hr: "88 bpm", spo2: "96%", status: "Warning"),
-    HealthRecord(patientName: "Sunita Devi", hr: "68 bpm", spo2: "99%", status: "Normal"),
-  ];
-
-  // Mock Prescriptions from Doctor (Simulating Doctor -> Worker Flow)
-  final Map<String, String> _doctorPrescriptions = {
-    "Rahul Sharma": "Inj. Lasix 40mg IV Stat\nTab. Telmisartan 40mg OD\nMonitor BP every 2 hours",
-    "Amit Kumar": "Tab. Dolo 650mg TDS for 3 days\nSyp. Ambroxol 10ml BD\nSteam Inhalation",
-  };
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -72,16 +67,19 @@ class _HealthWorkerDashboardState extends State<HealthWorkerDashboard> {
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 1000),
-            child: _selectedIndex == 0 ? _buildPatientList() : _buildGeoMap(),
+            child: _buildBodyContent(),
           ),
         ),
       ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _selectedIndex,
         onTap: (idx) => setState(() => _selectedIndex = idx),
+        type: BottomNavigationBarType.fixed,
+        selectedItemColor: const Color(0xFF09E5AB),
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.list), label: "Patients"),
-          BottomNavigationBarItem(icon: Icon(Icons.map), label: "Disease Map"),
+          BottomNavigationBarItem(icon: Icon(Icons.video_library), label: "Education"),
+          BottomNavigationBarItem(icon: Icon(Icons.history), label: "History"),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
@@ -104,6 +102,8 @@ class _HealthWorkerDashboardState extends State<HealthWorkerDashboard> {
             synced = true;
           }
 
+          if (!mounted) return;
+
           if (synced) {
             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Synced all offline data to Cloud!")));
           } else {
@@ -117,13 +117,123 @@ class _HealthWorkerDashboardState extends State<HealthWorkerDashboard> {
     );
   }
 
+  Widget _buildBodyContent() {
+    switch (_selectedIndex) {
+      case 0: return _buildPatientList();
+      case 1: return _buildEducationHub();
+      case 2: return _buildHistoryView();
+      default: return _buildPatientList();
+    }
+  }
+
+  Widget _buildHistoryView() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text("Diagnostic History", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+        const Text("Past reports and uploads", style: TextStyle(color: Colors.grey)),
+        const SizedBox(height: 20),
+        Expanded(
+          child: StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance.collection('diagnostic_reports').orderBy('timestamp', descending: true).snapshots(),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+              final docs = snapshot.data!.docs;
+              if (docs.isEmpty) return const Center(child: Text("No history found"));
+
+              return ListView.builder(
+                itemCount: docs.length,
+                itemBuilder: (context, index) {
+                  final data = docs[index].data() as Map<String, dynamic>;
+                  final results = data['results'] as Map<String, dynamic>? ?? {};
+                  final timestamp = (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now();
+                  
+                  return Card(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    child: ExpansionTile(
+                      leading: CircleAvatar(
+                        backgroundColor: Colors.blue.shade50,
+                        child: const Icon(Icons.assignment, color: Colors.blue),
+                      ),
+                      title: Text(data['patientName'] ?? 'Unknown', style: const TextStyle(fontWeight: FontWeight.bold)),
+                      subtitle: Text("Date: ${timestamp.toString().split('.')[0]}"),
+                      trailing: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                            color: (data['status'] == 'reviewed') ? Colors.green.withAlpha(26) : Colors.orange.withAlpha(26),
+                          borderRadius: BorderRadius.circular(8)
+                        ),
+                        child: Text(
+                          data['status']?.toUpperCase() ?? 'PENDING',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold, 
+                            fontSize: 10,
+                            color: (data['status'] == 'reviewed') ? Colors.green : Colors.orange
+                          )
+                        ),
+                      ),
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.all(15),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text("Vitals & Results:", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
+                              const SizedBox(height: 5),
+                              ...results.entries.map((e) => Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 2),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(e.key),
+                                    Text(e.value.toString(), style: const TextStyle(fontWeight: FontWeight.bold)),
+                                  ],
+                                ),
+                              )),
+                              if (data['prescription'] != null) ...[
+                                const Divider(),
+                                const Text("Doctor's Note:", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue)),
+                                const SizedBox(height: 5),
+                                Text(data['prescription']),
+                              ]
+                            ],
+                          ),
+                        )
+                      ],
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildPatientList() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text("Community Triage", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-        Text("${mockPatients.length} Active Patients | ${_pendingRecords.length} Pending Sync", style: const TextStyle(color: Colors.grey)),
+        Text("${_pendingRecords.length} Pending Sync", style: const TextStyle(color: Colors.grey)),
         const SizedBox(height: 20),
+
+        TextField(
+          controller: _searchController,
+          decoration: InputDecoration(
+            hintText: "Search patients...",
+            prefixIcon: const Icon(Icons.search),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            filled: true,
+            fillColor: Colors.white,
+            contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 15),
+          ),
+          onChanged: (val) => setState(() => _searchQuery = val.toLowerCase()),
+        ),
+        const SizedBox(height: 20),
+
         _buildHardwareStatus(),
         // New Diagnostic Kit Card
         GestureDetector(
@@ -133,13 +243,13 @@ class _HealthWorkerDashboardState extends State<HealthWorkerDashboard> {
             decoration: BoxDecoration(
               gradient: const LinearGradient(colors: [Color(0xFF0F172A), Color(0xFF334155)]),
               borderRadius: BorderRadius.circular(15),
-              boxShadow: [BoxShadow(color: Colors.blue.withOpacity(0.3), blurRadius: 10, offset: const Offset(0, 5))],
+              boxShadow: [BoxShadow(color: Colors.blue.withAlpha(77), blurRadius: 10, offset: const Offset(0, 5))],
             ),
             child: Row(
               children: [
                 Container(
                   padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(color: Colors.white.withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
+                  decoration: BoxDecoration(color: Colors.white.withAlpha(26), borderRadius: BorderRadius.circular(12)),
                   child: const Icon(Icons.medical_services_outlined, color: Color(0xFF09E5AB), size: 30),
                 ),
                 const SizedBox(width: 15),
@@ -157,55 +267,81 @@ class _HealthWorkerDashboardState extends State<HealthWorkerDashboard> {
             ),
           ),
         ),
+        const SizedBox(height: 15),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              _buildFilterChip('All', Colors.blue),
+              const SizedBox(width: 10),
+              _buildFilterChip('Critical', Colors.red),
+              const SizedBox(width: 10),
+              _buildFilterChip('Pending', Colors.orange),
+              const SizedBox(width: 10),
+              _buildFilterChip('Ready', Colors.green),
+            ],
+          ),
+        ),
         const SizedBox(height: 25),
         Expanded(
-          child: ListView.builder(
-            itemCount: mockPatients.length,
-            itemBuilder: (context, index) {
-              final p = mockPatients[index];
-              Color statusColor = p.status == 'Critical' 
-                  ? Colors.red 
-                  : (p.status == 'Warning' ? Colors.orange : Colors.green);
+          child: StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance.collection('diagnostic_reports').orderBy('timestamp', descending: true).snapshots(),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
               
-              return Card(
-                elevation: 0,
-                margin: const EdgeInsets.only(bottom: 12),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                child: ListTile(
-                  contentPadding: const EdgeInsets.all(15),
-                  leading: CircleAvatar(
-                    backgroundColor: statusColor.withOpacity(0.1),
-                    child: Icon(Icons.person, color: statusColor),
-                  ),
-                  title: Text(p.patientName, style: const TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle: Text("HR: ${p.hr} | SpO2: ${p.spo2}"),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (_doctorPrescriptions.containsKey(p.patientName))
-                        IconButton(
-                          icon: const Icon(Icons.description_outlined, color: Colors.blue),
-                          onPressed: () => _showPrescriptionDialog(p.patientName, _doctorPrescriptions[p.patientName]!),
-                        ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                        decoration: BoxDecoration(color: statusColor.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
-                        child: Text(p.status.toUpperCase(), style: TextStyle(color: statusColor, fontSize: 10, fontWeight: FontWeight.bold)),
-                      ),
-                    ],
-                  ),
-                  onTap: () {
-                    if (_isOffline) {
-                      // Simulate adding a record offline
-                      setState(() {
-                        _pendingRecords.add(p);
-                      });
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Vitals recorded locally. Sync when online.")));
-                    } else {
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Opening Patient Details...")));
-                    }
-                  },
-                ),
+              final docs = snapshot.data!.docs;
+              
+              var filteredDocs = docs;
+              if (_searchQuery.isNotEmpty) {
+                filteredDocs = filteredDocs.where((d) {
+                  final data = d.data() as Map<String, dynamic>;
+                  final name = (data['patientName'] ?? '').toString().toLowerCase();
+                  return name.contains(_searchQuery);
+                }).toList();
+              }
+
+              if (_filterStatus == 'Critical') {
+                filteredDocs = filteredDocs.where((d) {
+                  final data = d.data() as Map<String, dynamic>;
+                  final results = data['results'] as Map<String, dynamic>? ?? {};
+                  return results['Severity'] == 'High';
+                }).toList();
+              } else if (_filterStatus == 'Pending') {
+                filteredDocs = filteredDocs.where((d) => d['status'] == 'pending_review').toList();
+              } else if (_filterStatus == 'Ready') {
+                filteredDocs = filteredDocs.where((d) => d['status'] == 'reviewed').toList();
+              }
+
+              final pending = filteredDocs.where((d) => d['status'] == 'pending_review').toList();
+              final ready = filteredDocs.where((d) => d['status'] == 'reviewed').toList();
+              final completed = filteredDocs.where((d) {
+                if (d['status'] != 'completed') return false;
+                final ts = (d['timestamp'] as Timestamp).toDate();
+                final now = DateTime.now();
+                return ts.year == now.year && ts.month == now.month && ts.day == now.day;
+              }).toList();
+
+              return ListView(
+                children: [
+                  if (ready.isNotEmpty) ...[
+                    const Text("Ready to Dispense", style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 18)),
+                    const SizedBox(height: 10),
+                    ...ready.map((doc) => _buildReportCard(doc, true)),
+                    const SizedBox(height: 20),
+                  ],
+                  if (pending.isNotEmpty) ...[
+                    const Text("Pending Doctor Review", style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold, fontSize: 18)),
+                    const SizedBox(height: 10),
+                    ...pending.map((doc) => _buildReportCard(doc, false)),
+                    const SizedBox(height: 20),
+                  ],
+                  if (completed.isNotEmpty) ...[
+                    const Text("Completed Today", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 18)),
+                    const SizedBox(height: 10),
+                    ...completed.map((doc) => _buildReportCard(doc, false, isCompleted: true)),
+                    const SizedBox(height: 20),
+                  ],
+                ],
               );
             },
           ),
@@ -214,26 +350,173 @@ class _HealthWorkerDashboardState extends State<HealthWorkerDashboard> {
     );
   }
 
-  void _showPrescriptionDialog(String patientName, String prescription) {
+  Widget _buildFilterChip(String label, Color color) {
+    bool isSelected = _filterStatus == label;
+    return ChoiceChip(
+      label: Text(label),
+      selected: isSelected,
+      onSelected: (bool selected) {
+        setState(() => _filterStatus = label);
+      },
+      selectedColor: color.withAlpha(50),
+      backgroundColor: Colors.white,
+      labelStyle: TextStyle(
+        color: isSelected ? color : Colors.black54,
+        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal
+      ),
+      side: BorderSide(color: isSelected ? color : Colors.grey.shade300),
+    );
+  }
+
+  Widget _buildReportCard(QueryDocumentSnapshot doc, bool isActionable, {bool isCompleted = false}) {
+    final data = doc.data() as Map<String, dynamic>;
+    final results = data['results'] as Map<String, dynamic>? ?? {};
+    final severity = results['Severity'] ?? 'Low';
+    Color color = severity == 'High' ? Colors.red : (severity == 'Moderate' ? Colors.orange : Colors.green);
+    if (isCompleted) color = Colors.grey;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: ListTile(
+        leading: CircleAvatar(backgroundColor: color.withAlpha(26), child: Icon(isCompleted ? Icons.check : Icons.medical_services, color: color)),
+        title: Text(data['patientName'] ?? 'Unknown', style: TextStyle(fontWeight: FontWeight.bold, decoration: isCompleted ? TextDecoration.lineThrough : null)),
+        subtitle: Text("Diagnosis: ${results['Diagnosis'] ?? '--'}"),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.chat_bubble_outline, color: Colors.blue),
+              onPressed: () => _showChatDialog(doc.id, data['patientName'] ?? 'Unknown'),
+            ),
+            const SizedBox(width: 8),
+            if (isActionable)
+              ElevatedButton(
+                onPressed: () => _showPrescriptionDialog(data['patientName'], data['prescription'] ?? data['referralLetter'] ?? "No details", doc.id),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
+                child: const Text("Dispense"),
+              )
+            else
+              (isCompleted ? const Icon(Icons.check_circle, color: Colors.green) : const Text("Waiting...", style: TextStyle(color: Colors.orange))),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showChatDialog(String reportId, String patientName) {
+    final TextEditingController msgController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text("Chat: $patientName"),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 400,
+          child: Column(
+            children: [
+              Expanded(
+                child: StreamBuilder<QuerySnapshot>(
+                  stream: FirebaseFirestore.instance
+                      .collection('diagnostic_reports')
+                      .doc(reportId)
+                      .collection('messages')
+                      .orderBy('timestamp', descending: true)
+                      .snapshots(),
+                  builder: (ctx, snapshot) {
+                    if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+                    final msgs = snapshot.data!.docs;
+                    if (msgs.isEmpty) return const Center(child: Text("No messages yet."));
+                    return ListView.builder(
+                      reverse: true,
+                      itemCount: msgs.length,
+                      itemBuilder: (ctx, i) {
+                        final m = msgs[i].data() as Map<String, dynamic>;
+                        final isMe = m['role'] == 'worker';
+                        return Align(
+                          alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+                          child: Container(
+                            margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: isMe ? Colors.blue.shade100 : Colors.grey.shade200,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(m['message'], style: const TextStyle(fontSize: 14)),
+                                Text(m['senderName'] ?? '', style: const TextStyle(fontSize: 10, color: Colors.black54)),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+              const Divider(),
+              Row(
+                children: [
+                  Expanded(child: TextField(controller: msgController, decoration: const InputDecoration(hintText: "Type a message..."))),
+                  IconButton(
+                    icon: const Icon(Icons.send),
+                    onPressed: () {
+                      if (msgController.text.trim().isEmpty) return;
+                      FirebaseFirestore.instance
+                          .collection('diagnostic_reports')
+                          .doc(reportId)
+                          .collection('messages')
+                          .add({
+                        'message': msgController.text.trim(),
+                        'senderName': widget.session.username,
+                        'role': 'worker',
+                        'timestamp': FieldValue.serverTimestamp(),
+                      });
+                      msgController.clear();
+                    },
+                  )
+                ],
+              )
+            ],
+          ),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Close"))],
+      ),
+    );
+  }
+
+  void _showPrescriptionDialog(String patientName, String prescription, [String? docId]) {
+    bool isReferral = prescription.contains("To: District Medical Officer");
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Row(
           children: [
-            const Icon(Icons.medical_services, color: Colors.blue),
+            Icon(isReferral ? Icons.assignment_late : Icons.medical_services, color: isReferral ? Colors.red : Colors.blue),
             const SizedBox(width: 10),
-            Expanded(child: Text("Rx: $patientName", style: const TextStyle(fontSize: 18))),
+            Expanded(child: Text("${isReferral ? 'Referral' : 'Rx'}: $patientName", style: const TextStyle(fontSize: 18))),
           ],
         ),
         content: Container(
           width: double.maxFinite,
           padding: const EdgeInsets.all(15),
-          decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(10)),
+          decoration: BoxDecoration(color: isReferral ? Colors.red.shade50 : Colors.blue.shade50, borderRadius: BorderRadius.circular(10)),
           child: Text(prescription, style: const TextStyle(fontSize: 16, height: 1.5)),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Close")),
-          ElevatedButton(onPressed: () => Navigator.pop(ctx), child: const Text("Dispense Meds")),
+          ElevatedButton(
+            onPressed: () {
+              if (docId != null && !isReferral) {
+                FirebaseFirestore.instance.collection('diagnostic_reports').doc(docId).update({'status': 'completed'});
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Medicines Dispensed. Patient Completed.")));
+              }
+              Navigator.pop(ctx);
+            },
+            child: Text(isReferral ? "Share / Print" : "Dispense Meds")
+          ),
         ],
       ),
     );
@@ -252,21 +535,75 @@ class _HealthWorkerDashboardState extends State<HealthWorkerDashboard> {
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
           _buildStatusItem(Icons.power_settings_new, "ON", "Kit Status", Colors.green),
-          _buildStatusItem(Icons.science, "42", "Strips Left", Colors.blue),
+          _buildStatusItem(Icons.science, "42", "Strips Left", Colors.blue, onTap: _showRestockDialog),
           _buildStatusItem(Icons.build, "OK", "Calibration", Colors.orange),
         ],
       ),
     );
   }
 
-  Widget _buildStatusItem(IconData icon, String value, String label, Color color) {
-    return Column(
-      children: [
-        Icon(icon, color: color, size: 28),
-        const SizedBox(height: 5),
-        Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-        Text(label, style: const TextStyle(color: Colors.grey, fontSize: 12)),
-      ],
+  Widget _buildStatusItem(IconData icon, String value, String label, Color color, {VoidCallback? onTap}) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.all(8.0),
+        child: Column(
+          children: [
+            Icon(icon, color: color, size: 28),
+            const SizedBox(height: 5),
+            Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            Text(label, style: const TextStyle(color: Colors.grey, fontSize: 12)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showRestockDialog() {
+    final TextEditingController qtyController = TextEditingController();
+    String selectedItem = "Glucose Strips";
+    
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Request Supplies"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            DropdownButtonFormField<String>(
+              initialValue: selectedItem,
+              items: ["Glucose Strips", "Urine Strips", "Lancets", "Batteries", "Sanitizer"]
+                  .map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
+              onChanged: (v) => selectedItem = v!,
+              decoration: const InputDecoration(labelText: "Item"),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: qtyController,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: "Quantity Needed"),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+          ElevatedButton(
+            onPressed: () {
+              FirebaseFirestore.instance.collection('inventory_requests').add({
+                'item': selectedItem,
+                'quantity': int.tryParse(qtyController.text) ?? 0,
+                'requestedAt': FieldValue.serverTimestamp(),
+                'status': 'pending',
+                'phcId': 'sector-4', // Mock ID
+              });
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Request Sent to Central Supply")));
+            },
+            child: const Text("Submit Request"),
+          )
+        ],
+      ),
     );
   }
 
@@ -314,72 +651,70 @@ class _HealthWorkerDashboardState extends State<HealthWorkerDashboard> {
     );
   }
 
-  Widget _buildGeoMap() {
+  Widget _buildEducationHub() {
+    final List<Map<String, String>> videos = [
+      {"title": "Prenatal Care Basics", "duration": "5:30", "category": "Maternal"},
+      {"title": "Managing Hypertension", "duration": "4:15", "category": "Chronic"},
+      {"title": "Hygiene & Sanitation", "duration": "3:45", "category": "General"},
+      {"title": "Vaccination Schedule", "duration": "6:10", "category": "Pediatric"},
+    ];
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text("Geospatial Disease Mapping", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-        const Text("Visualizing patient clusters in your sector", style: TextStyle(color: Colors.grey)),
+        const Text("Patient Education Hub", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+        const Text("Educational materials for community awareness", style: TextStyle(color: Colors.grey)),
         const SizedBox(height: 20),
         Expanded(
-          child: Container(
-            width: double.infinity,
-            decoration: BoxDecoration(
-              color: Colors.blue.shade50,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: Colors.blue.shade100),
+          child: GridView.builder(
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              crossAxisSpacing: 15,
+              mainAxisSpacing: 15,
+              childAspectRatio: 1.3,
             ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(20),
-              child: CustomPaint(
-                painter: _MapPainter(mockPatients),
-                child: const Center(child: Text("Sector 4 Map View", style: TextStyle(color: Colors.black26, fontWeight: FontWeight.bold, fontSize: 24))),
-              ),
-            ),
+            itemCount: videos.length,
+            itemBuilder: (context, index) {
+              final v = videos[index];
+              return Card(
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Container(
+                        decoration: const BoxDecoration(
+                          color: Colors.black12,
+                          borderRadius: BorderRadius.vertical(top: Radius.circular(15)),
+                        ),
+                        child: const Center(child: Icon(Icons.play_circle_fill, size: 50, color: Colors.white)),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.all(10),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(v['title']!, style: const TextStyle(fontWeight: FontWeight.bold)),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(v['category']!, style: const TextStyle(color: Colors.blue, fontSize: 12)),
+                              Text(v['duration']!, style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                            ],
+                          )
+                        ],
+                      ),
+                    )
+                  ],
+                ),
+              );
+            },
           ),
         ),
       ],
     );
   }
-}
-
-class _MapPainter extends CustomPainter {
-  final List<HealthRecord> patients;
-  _MapPainter(this.patients);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()..style = PaintingStyle.fill;
-    final random = Random(42); // Fixed seed for consistency
-
-    // Draw Grid
-    final gridPaint = Paint()..color = Colors.blue.withOpacity(0.1)..strokeWidth = 1;
-    for(double i=0; i<size.width; i+=40) {
-      canvas.drawLine(Offset(i, 0), Offset(i, size.height), gridPaint);
-    }
-    for(double i=0; i<size.height; i+=40) {
-      canvas.drawLine(Offset(0, i), Offset(size.width, i), gridPaint);
-    }
-
-    // Draw Patients
-    for (var p in patients) {
-      final x = random.nextDouble() * size.width;
-      final y = random.nextDouble() * size.height;
-      
-      Color color = p.status == 'Critical' ? Colors.red : (p.status == 'Warning' ? Colors.orange : Colors.green);
-      paint.color = color.withOpacity(0.6);
-      
-      // Draw "Heatmap" glow
-      canvas.drawCircle(Offset(x, y), 15, paint);
-      
-      // Draw Core
-      paint.color = color;
-      canvas.drawCircle(Offset(x, y), 6, paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class _DiagnosticKitOverlay extends StatefulWidget {
@@ -396,6 +731,8 @@ class _DiagnosticKitOverlayState extends State<_DiagnosticKitOverlay> {
   int _step = 0;
   String _status = "Connecting to HD009 Kit...";
   Map<String, dynamic> _results = {};
+  String? _generatedReferralLetter;
+  bool _forceCritical = false;
 
   @override
   void initState() {
@@ -420,6 +757,7 @@ class _DiagnosticKitOverlayState extends State<_DiagnosticKitOverlay> {
       int sys = 100 + random.nextInt(60); // Range: 100 - 160
       int dia = 60 + random.nextInt(40); // Range: 60 - 100
       int spo2 = 92 + random.nextInt(8); // Range: 92 - 100
+      int hr = 60 + random.nextInt(40); // Range: 60 - 100
       bool proteinPos = random.nextDouble() > 0.7; // 30% chance of positive
 
       // Edge AI Logic: Interpret results instantly
@@ -440,6 +778,7 @@ class _DiagnosticKitOverlayState extends State<_DiagnosticKitOverlay> {
           'Glucose': '$glucose mg/dL',
           'Urine Protein': proteinPos ? '++' : 'Negative',
           'Blood Pressure': '$sys/$dia mmHg',
+          'Heart Rate': '$hr bpm',
           'SpO2': '$spo2%',
           'Diagnosis': diagnosis,
           'Severity': severity,
@@ -453,7 +792,6 @@ class _DiagnosticKitOverlayState extends State<_DiagnosticKitOverlay> {
     Color statusColor = Colors.green;
     if (_results['Severity'] == 'High') statusColor = Colors.red;
     if (_results['Severity'] == 'Moderate') statusColor = Colors.orange;
-    bool isCritical = _results['Severity'] == 'High';
 
     return Container(
       height: MediaQuery.of(context).size.height * 0.6,
@@ -485,8 +823,7 @@ class _DiagnosticKitOverlayState extends State<_DiagnosticKitOverlay> {
                   const Text("AI Interpretation:", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
                   const SizedBox(height: 5),
                   Container(
-                    padding: const EdgeInsets.all(15),
-                    decoration: BoxDecoration(color: statusColor.withOpacity(0.1), borderRadius: BorderRadius.circular(10), border: Border.all(color: statusColor.withOpacity(0.3))),
+                    padding: const EdgeInsets.all(15),                    decoration: BoxDecoration(color: statusColor.withAlpha(26), borderRadius: BorderRadius.circular(10), border: Border.all(color: statusColor.withAlpha(77))),
                     child: Row(
                       children: [
                         Icon(Icons.auto_awesome, color: statusColor),
@@ -495,52 +832,65 @@ class _DiagnosticKitOverlayState extends State<_DiagnosticKitOverlay> {
                       ],
                     ),
                   ),
-                  if (isCritical) ...[
-                    const SizedBox(height: 15),
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: _generateReferral,
-                        icon: const Icon(Icons.assignment_late, color: Colors.red),
-                        label: const Text("Generate Urgent Referral", style: TextStyle(color: Colors.red)),
-                        style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.red), padding: const EdgeInsets.symmetric(vertical: 12)),
-                      ),
-                    ),
-                  ],
                 ],
               ),
             ),
             const SizedBox(height: 20),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: () async {
-                  // Upload to Cloud
-                  final reportData = {
-                    'patientName': widget.patientName ?? 'Unknown (Walk-in)',
-                    'results': _results,
-                    'timestamp': DateTime.now(), // Use local time initially
-                    'status': 'pending_review'
-                  };
+            CheckboxListTile(
+              title: const Text("Mark as Critical Condition", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+              value: _forceCritical,
+              onChanged: (val) => setState(() => _forceCritical = val ?? false),
+              activeColor: Colors.red,
+              controlAffinity: ListTileControlAffinity.leading,
+              contentPadding: EdgeInsets.zero,
+            ),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _generateReferral,
+                    icon: const Icon(Icons.assignment_late, color: Colors.red),
+                    label: const Text("Referral", style: TextStyle(color: Colors.red)),
+                    style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.red), padding: const EdgeInsets.symmetric(vertical: 15)),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: () async {
+                      if (_forceCritical) {
+                        _results['Severity'] = 'High';
+                      }
 
-                  if (widget.isOffline) {
-                    widget.onSaveOffline(reportData);
-                    if(mounted) {
-                      Navigator.pop(context);
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Report Saved Locally (Offline Mode)")));
-                    }
-                  } else {
-                    await FirebaseFirestore.instance.collection('diagnostic_reports').add(reportData);
-                    if(mounted) {
-                      Navigator.pop(context);
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Report Sent to Doctor for Confirmation")));
-                    }
-                  }
-                },
-                icon: const Icon(Icons.cloud_upload),
-                label: const Text("Upload to Specialist"),
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF09E5AB), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 15)),
-              ),
+                      // Upload to Cloud
+                      final reportData = {
+                        'patientName': widget.patientName ?? 'Unknown (Walk-in)',
+                        'results': _results,
+                        'timestamp': DateTime.now(), // Use local time initially
+                        'referralLetter': _generatedReferralLetter,
+                        'status': 'pending_review'
+                      };
+
+                      if (widget.isOffline) {
+                        widget.onSaveOffline(reportData);
+                        if(mounted) {
+                          Navigator.pop(context);
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Report Saved Locally (Offline Mode)")));
+                        }
+                      } else {
+                        await FirebaseFirestore.instance.collection('diagnostic_reports').add(reportData);
+                        if(mounted) {
+                          Navigator.pop(context);
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Report Sent to Doctor for Confirmation")));
+                        }
+                      }
+                    },
+                    icon: const Icon(Icons.cloud_upload),
+                    label: const Text("Upload"),
+                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF09E5AB), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 15)),
+                  ),
+                ),
+              ],
             )
           ]
         ],
@@ -562,12 +912,12 @@ class _DiagnosticKitOverlayState extends State<_DiagnosticKitOverlay> {
   }
 
   void _generateReferral() {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Row(children: [Icon(Icons.local_hospital, color: Colors.red), SizedBox(width: 10), Text("Referral Letter")]),
-        content: SingleChildScrollView(
-          child: Text(
+    if (_results['Severity'] != 'High') {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Referral generation is restricted to Critical/High severity cases."), backgroundColor: Colors.orange));
+      return;
+    }
+
+    final String letter = 
             "To: District Medical Officer\n"
             "From: PHC Sector 4\n"
             "Date: ${DateTime.now().toString().split('.')[0]}\n\n"
@@ -578,19 +928,28 @@ class _DiagnosticKitOverlayState extends State<_DiagnosticKitOverlay> {
             "- BP: ${_results['Blood Pressure']}\n"
             "- SpO2: ${_results['SpO2']}\n"
             "- Glucose: ${_results['Glucose']}\n\n"
-            "Immediate attention required.",
-            style: const TextStyle(fontFamily: 'Monospace', fontSize: 12),
-          ),
+            "Immediate attention required.";
+
+    setState(() {
+      _generatedReferralLetter = letter;
+    });
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(children: [Icon(Icons.local_hospital, color: Colors.red), SizedBox(width: 10), Text("Referral Letter")]),
+        content: SingleChildScrollView(
+          child: Text(letter, style: const TextStyle(fontFamily: 'Monospace', fontSize: 12)),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Close")),
           ElevatedButton.icon(
             onPressed: () {
               Navigator.pop(ctx);
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Referral Letter Shared via WhatsApp")));
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Referral Attached to Report")));
             },
-            icon: const Icon(Icons.share),
-            label: const Text("Share"),
+            icon: const Icon(Icons.attach_file),
+            label: const Text("Attach"),
             style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white),
           )
         ],

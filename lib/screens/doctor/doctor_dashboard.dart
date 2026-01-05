@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:intl/intl.dart'; // Add to pubspec.yaml: intl: ^0.19.0
 import '../../models/user_session.dart';
-import '../../models/patient_report.dart';
 
 class DoctorDashboard extends StatefulWidget {
   final UserSession session;
@@ -19,19 +17,18 @@ class DoctorDashboard extends StatefulWidget {
 }
 
 class _DoctorDashboardState extends State<DoctorDashboard> {
-  String _selectedFilter = 'pending_review';
-  List<PatientReport> _reports = [];
-  List<PatientReport> _filteredReports = [];
-  int _pendingCount = 0;
-  int _criticalCount = 0;
-  bool _isLoading = true;
+  int _selectedIndex = 0;
+  late Stream<QuerySnapshot> _referralsStream;
   final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = "";
 
   @override
   void initState() {
     super.initState();
-    _searchController.addListener(_filterReports);
-    _loadData();
+    _referralsStream = FirebaseFirestore.instance
+        .collection('diagnostic_reports')
+        .orderBy('timestamp', descending: true)
+        .snapshots();
   }
 
   @override
@@ -40,353 +37,930 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
     super.dispose();
   }
 
-  void _filterReports() {
-    final query = _searchController.text.toLowerCase();
-    setState(() {
-      _filteredReports = _reports.where((report) {
-        return report.patientName.toLowerCase().contains(query);
-      }).toList();
-    });
-  }
-
-  Future<void> _loadData() async {
-    if (!mounted) return;
-    setState(() => _isLoading = true);
-    try {
-      final pendingSnap = await FirebaseFirestore.instance.collection('diagnostic_reports').where('status', isEqualTo: 'pending_review').get();
-      
-      // Calculate critical cases client-side to avoid composite index error
-      int criticals = 0;
-      for (var doc in pendingSnap.docs) {
-        final data = doc.data();
-        if (data['results'] is Map && data['results']['Severity'] == 'High') {
-          criticals++;
-        }
-      }
-
-      // Remove orderBy to avoid composite index error, sort client-side instead
-      Query query = FirebaseFirestore.instance.collection('diagnostic_reports');
-      if (_selectedFilter != 'all') {
-        query = query.where('status', isEqualTo: _selectedFilter);
-      }
-      final reportsSnap = await query.get();
-
-      if (mounted) {
-        setState(() {
-          _pendingCount = pendingSnap.size;
-          _criticalCount = criticals;
-          _reports = reportsSnap.docs.map((doc) => PatientReport.fromFirestore(doc)).toList();
-          _reports.sort((a, b) => b.timestamp.compareTo(a.timestamp));
-          _filterReports();
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      debugPrint("Error loading data: $e");
-      if (mounted) setState(() => _isLoading = false);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
+    final bool isMobile = MediaQuery.of(context).size.width < 900;
+
     return Scaffold(
-      backgroundColor: const Color(0xFFF1F5F9),
+      backgroundColor: const Color(0xFFF8F9FA),
       appBar: AppBar(
-        title: const Text("Doctor Portal"),
-        backgroundColor: Colors.blue[800],
-        foregroundColor: Colors.white,
+        title: const Text("Doctor Portal", style: TextStyle(fontWeight: FontWeight.bold)),
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+        elevation: 1,
         actions: [
-          IconButton(icon: const Icon(Icons.refresh), onPressed: _loadData),
-          IconButton(icon: const Icon(Icons.logout), onPressed: widget.onLogout),
+          IconButton(onPressed: () {}, icon: const Icon(Icons.notifications_outlined)),
+          IconButton(onPressed: widget.onLogout, icon: const Icon(Icons.logout)),
         ],
       ),
-      body: Column(
+      body: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _buildHeader(),
-          _buildSearchBar(),
-          _buildFilterChips(),
-          Expanded(child: _buildReportsList()),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildHeader() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      color: Colors.white,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
-        children: [
-          _buildStatCard(
-            "Pending Review",
-            _pendingCount,
-            Colors.orange,
-          ),
-          _buildStatCard(
-            "Critical Cases",
-            _criticalCount,
-            Colors.red,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStatCard(String title, int count, Color color) {
-    return Expanded(
-      child: Card(
-        color: color.withOpacity(0.1),
-        elevation: 0,
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            children: [
-              Text(
-                count.toString(),
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: color),
-              ),
-              const SizedBox(height: 4),
-              Text(title, style: TextStyle(fontSize: 12, color: color)),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSearchBar() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-      child: TextField(
-        controller: _searchController,
-        decoration: InputDecoration(
-          hintText: "Search by patient name...",
-          prefixIcon: const Icon(Icons.search),
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-          contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 16),
-          filled: true,
-          fillColor: Colors.white,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFilterChips() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 12.0),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            FilterChip(
-              label: const Text("Pending Review"),
-              selected: _selectedFilter == 'pending_review',
-              onSelected: (val) {
-                setState(() => _selectedFilter = 'pending_review');
-                _loadData();
-              },
-              selectedColor: Colors.orange[200],
-            ),
-            const SizedBox(width: 8),
-            FilterChip(
-              label: const Text("Reviewed"),
-              selected: _selectedFilter == 'reviewed',
-              onSelected: (val) {
-                setState(() => _selectedFilter = 'reviewed');
-                _loadData();
-              },
-              selectedColor: Colors.green[200],
-            ),
-            const SizedBox(width: 8),
-            FilterChip(
-              label: const Text("All Reports"),
-              selected: _selectedFilter == 'all',
-              onSelected: (val) {
-                setState(() => _selectedFilter = 'all');
-                _loadData();
-              },
-              selectedColor: Colors.blue[200],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildReportsList() {
-    if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (_filteredReports.isEmpty) {
-      return Center(child: Text("No reports found for this filter.", style: TextStyle(color: Colors.grey[600])));
-    }
-
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: _filteredReports.length,
-      itemBuilder: (context, index) {
-        final report = _filteredReports[index];
-        final severity = report.results['Severity'] ?? 'Low';
-        Color statusColor = severity == 'High' ? Colors.red : (severity == 'Moderate' ? Colors.orange : Colors.green);
-
-        return Card(
-          elevation: 2,
-          margin: const EdgeInsets.only(bottom: 12),
-          shape: RoundedRectangleBorder(
-            side: BorderSide(color: statusColor.withOpacity(0.5), width: 1),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(12.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(report.patientName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                    Text(DateFormat('d MMM, h:mm a').format(report.timestamp), style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                  ],
-                ),
-                const Divider(height: 16),
-                Text.rich(
-                  TextSpan(
-                    style: const TextStyle(color: Colors.black87, height: 1.5),
-                    children: [
-                      const TextSpan(text: "AI Diagnosis: ", style: TextStyle(fontWeight: FontWeight.bold)),
-                      TextSpan(text: "${report.results['Diagnosis'] ?? 'N/A'} "),
-                      TextSpan(text: "($severity)", style: TextStyle(color: statusColor, fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                ),
-                    const SizedBox(height: 8),
-                    if (report.results.entries.any((e) => e.key != 'Diagnosis' && e.key != 'Severity'))
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text("Vitals & Details:", style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                          const SizedBox(height: 4),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: report.results.entries
-                                .where((e) => e.key != 'Diagnosis' && e.key != 'Severity')
-                                .map((e) => Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                      decoration: BoxDecoration(
-                                        color: Colors.grey[100],
-                                        borderRadius: BorderRadius.circular(4),
-                                        border: Border.all(color: Colors.grey[300]!),
-                                      ),
-                                      child: Text("${e.key}: ${e.value}", style: const TextStyle(fontSize: 12)),
-                                    ))
-                                .toList(),
-                          ),
-                        ],
-                      ),
-                const SizedBox(height: 12),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    if (report.status == 'pending_review')
-                      TextButton.icon(
-                        onPressed: () => _markAsReviewed(report.id),
-                        icon: const Icon(Icons.check_circle_outline, size: 18),
-                        label: const Text("Mark Reviewed"),
-                      ),
-                    const SizedBox(width: 8),
-                    ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[600], foregroundColor: Colors.white),
-                      icon: const Icon(Icons.edit_note, size: 18),
-                      label: const Text("Prescribe"),
-                      onPressed: () => _showPrescriptionDialog(context, report),
-                    ),
-                  ],
-                ),
+          if (!isMobile) ...[
+            NavigationRail(
+              selectedIndex: _selectedIndex,
+              onDestinationSelected: (int index) => setState(() => _selectedIndex = index),
+              labelType: NavigationRailLabelType.all,
+              destinations: const [
+                NavigationRailDestination(icon: Icon(Icons.dashboard), label: Text('Dashboard')),
+                NavigationRailDestination(icon: Icon(Icons.people), label: Text('Patients')),
+                NavigationRailDestination(icon: Icon(Icons.calendar_month), label: Text('Schedule')),
+                NavigationRailDestination(icon: Icon(Icons.history), label: Text('History')),
               ],
             ),
+            const VerticalDivider(thickness: 1, width: 1),
+          ],
+          Expanded(
+            child: _buildContent(context),
           ),
+        ],
+      ),
+      bottomNavigationBar: isMobile
+          ? BottomNavigationBar(
+              currentIndex: _selectedIndex,
+              onTap: (int index) => setState(() => _selectedIndex = index),
+              type: BottomNavigationBarType.fixed,
+              items: const [
+                BottomNavigationBarItem(icon: Icon(Icons.dashboard), label: 'Dashboard'),
+                BottomNavigationBarItem(icon: Icon(Icons.people), label: 'Patients'),
+                BottomNavigationBarItem(icon: Icon(Icons.calendar_month), label: 'Schedule'),
+                BottomNavigationBarItem(icon: Icon(Icons.history), label: 'History'),
+              ],
+            )
+          : null,
+    );
+  }
+
+  // ==== FIX 1: pass BuildContext so `context` is defined ====
+  Widget _buildContent(BuildContext context) {
+    switch (_selectedIndex) {
+      case 0:
+        return _buildDashboardView(context);
+      case 1:
+        return _buildAllPatientsView(context);
+      case 2:
+        return _buildScheduleView(context);
+      case 3:
+        return _buildHistoryView();
+      default:
+        return _buildDashboardView(context);
+    }
+  }
+
+  // ==== Also accept BuildContext where MediaQuery / ScaffoldMessenger are used ====
+  Widget _buildDashboardView(BuildContext context) {
+    final bool isMobile = MediaQuery.of(context).size.width < 900;
+
+    return StreamBuilder<QuerySnapshot>(
+      stream: _referralsStream,
+      builder: (context, snapshot) {
+        int pendingCount = 0;
+        int criticalCount = 0;
+        int completedTodayCount = 0;
+        List<QueryDocumentSnapshot> docs = [];
+        List<QueryDocumentSnapshot> criticalDocs = [];
+        List<QueryDocumentSnapshot> normalPendingDocs = [];
+        List<QueryDocumentSnapshot> completedDocs = [];
+
+        if (snapshot.hasError) {
+          return Center(
+              child: Text("Error loading data: ${snapshot.error}",
+                  style: const TextStyle(color: Colors.red)));
+        }
+
+        if (snapshot.hasData) {
+          docs = snapshot.data!.docs;
+          final allPending = docs.where((d) => d['status'] == 'pending_review').toList();
+
+          criticalDocs = allPending.where((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            final results = data['results'] as Map<String, dynamic>?;
+            return results?['Severity'] == 'High';
+          }).toList();
+
+          normalPendingDocs =
+              allPending.where((doc) => !criticalDocs.contains(doc)).toList();
+
+          completedDocs = docs.where((d) {
+            final data = d.data() as Map<String, dynamic>;
+            if (data['status'] != 'reviewed' && data['status'] != 'completed') return false;
+            final Timestamp? ts = data['reviewedAt'] as Timestamp?;
+            if (ts == null) return false;
+            final date = ts.toDate();
+            final now = DateTime.now();
+            return date.year == now.year &&
+                date.month == now.month &&
+                date.day == now.day;
+          }).toList();
+
+          pendingCount = normalPendingDocs.length;
+          criticalCount = criticalDocs.length;
+          completedTodayCount = completedDocs.length;
+        }
+
+        Widget statsSection = SingleChildScrollView(
+          child: Column(
+            children: [
+              _buildStatCard("Pending Reviews", "$pendingCount", Colors.orange),
+              const SizedBox(height: 15),
+              _buildStatCard("Completed Today", "$completedTodayCount", Colors.green),
+              const SizedBox(height: 15),
+              _buildStatCard("Critical Alerts", "$criticalCount", Colors.red),
+            ],
+          ),
+        );
+
+        Widget mainContentSection = ListView(
+          padding: EdgeInsets.zero,
+          children: [
+            if (criticalDocs.isNotEmpty) ...[
+              const Text("Critical Alerts",
+                  style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.red)),
+              const SizedBox(height: 10),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 300),
+                child: ListView(
+                  shrinkWrap: true,
+                  primary: false,
+                  padding: EdgeInsets.zero,
+                  children:
+                      criticalDocs.map((doc) => _buildPatientCard(doc, context)).toList(),
+                ),
+              ),
+              const SizedBox(height: 20),
+            ],
+            const Text("Pending Reviews",
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 15),
+            snapshot.connectionState == ConnectionState.waiting
+                ? const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 20),
+                    child: Center(child: CircularProgressIndicator()))
+                : (normalPendingDocs.isEmpty
+                    ? const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 20),
+                        child: Center(child: Text("No pending referrals")))
+                    : ListView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: normalPendingDocs.length,
+                        itemBuilder: (context, index) {
+                          return _buildPatientCard(normalPendingDocs[index], context);
+                        },
+                      )),
+            if (completedDocs.isNotEmpty) ...[
+              const SizedBox(height: 20),
+              const Text("Completed Today",
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 10),
+              SizedBox(
+                height: 150,
+                child: ListView.builder(
+                  itemCount: completedDocs.length,
+                  itemBuilder: (context, index) {
+                    final data =
+                        completedDocs[index].data() as Map<String, dynamic>;
+                    return ListTile(
+                      leading:
+                          const Icon(Icons.check_circle, color: Colors.green),
+                      title: Text(data['patientName'] ?? 'Unknown'),
+                      subtitle: Text(data['status'] == 'completed'
+                          ? 'Dispensed'
+                          : 'Prescription Sent'),
+                    );
+                  },
+                ),
+              )
+            ]
+          ],
+        );
+
+        return Padding(
+          padding: const EdgeInsets.all(20.0),
+          child: isMobile
+              ? Column(
+                  children: [
+                    statsSection,
+                    const SizedBox(height: 20),
+                    Expanded(child: mainContentSection),
+                  ],
+                )
+              : Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(flex: 1, child: statsSection),
+                    const SizedBox(width: 20),
+                    Expanded(flex: 3, child: mainContentSection),
+                  ],
+                ),
         );
       },
     );
   }
 
-  void _showPrescriptionDialog(BuildContext context, PatientReport report) {
-    final TextEditingController controller = TextEditingController();
+  // ==== pass context into card so it can call _openPatientReview safely ====
+  Widget _buildPatientCard(QueryDocumentSnapshot doc, BuildContext context) {
+    final data = doc.data() as Map<String, dynamic>;
+    final results = data['results'] as Map<String, dynamic>? ?? {};
 
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-        title: Row(
+    final String name = data['patientName'] ?? 'Unknown';
+    final String hr = results['Heart Rate'] ?? '--';
+    final String spo2 = results['SpO2'] ?? '--';
+    final String severity = results['Severity'] ?? 'Unknown';
+
+    Color statusColor = severity == 'High'
+        ? Colors.red
+        : (severity == 'Moderate' ? Colors.orange : Colors.green);
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 15),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(15),
+        child: Row(
           children: [
-            const Icon(Icons.medical_services, color: Colors.blue),
-            const SizedBox(width: 10),
-            Expanded(child: Text("Rx: ${report.patientName}", style: const TextStyle(fontSize: 18))),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text("Enter medicines & instructions:", style: TextStyle(fontSize: 12, color: Colors.grey[700])),
-            const SizedBox(height: 8),
-            TextField(
-              controller: controller,
-              maxLines: 5,
-              autofocus: true,
-              decoration: InputDecoration(
-                hintText: "e.g., Tab. Paracetamol 500mg BD...",
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                filled: true,
-                fillColor: Colors.blue[50],
+            CircleAvatar(
+              backgroundColor: statusColor.withAlpha(26),
+              child: Text(
+                  name.isNotEmpty ? name[0] : '?',
+                  style: TextStyle(
+                      color: statusColor, fontWeight: FontWeight.bold)),
+            ),
+            const SizedBox(width: 15),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(name,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 16)),
+                  const SizedBox(height: 2),
+                  Text("Vitals: HR $hr | SpO2 $spo2",
+                      style: const TextStyle(color: Colors.grey)),
+                  Text("Status: $severity",
+                      style: TextStyle(
+                          color: statusColor,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12)),
+                ],
               ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.chat_bubble_outline, color: Colors.blue),
+              onPressed: () => _showChatDialog(doc.id, name),
+              tooltip: "Chat with Worker",
+            ),
+            const SizedBox(width: 8),
+            ElevatedButton(
+              onPressed: () => _openPatientReview(doc.id, data, context),
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue,
+                  foregroundColor: Colors.white),
+              child: const Text("Review"),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text("Cancel"),
+      ),
+    );
+  }
+
+  Widget _buildAllPatientsView(BuildContext context) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(20),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    hintText: "Search patients by name...",
+                    prefixIcon: const Icon(Icons.search),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    filled: true,
+                    fillColor: Colors.white,
+                  ),
+                  onChanged: (val) => setState(() => _searchQuery = val.toLowerCase()),
+                ),
+              ),
+              const SizedBox(width: 10),
+              IconButton(
+                onPressed: () => _clearCollection(context, 'diagnostic_reports'),
+                icon: const Icon(Icons.delete_sweep, color: Colors.red),
+                tooltip: "Clear All Patients",
+              ),
+            ],
           ),
+        ),
+        Expanded(
+          child: StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance
+                .collection('diagnostic_reports')
+                .orderBy('timestamp', descending: true)
+                .snapshots(),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) {
+                return const Center(child: CircularProgressIndicator());
+              }
+
+              final docs = snapshot.data!.docs;
+              final Map<String, Map<String, dynamic>> uniquePatients = {};
+
+              // Deduplicate patients (show latest record info)
+              for (var doc in docs) {
+                final data = doc.data() as Map<String, dynamic>;
+                final name = data['patientName'] ?? 'Unknown';
+                if (!uniquePatients.containsKey(name)) {
+                  uniquePatients[name] = data;
+                }
+              }
+
+              var patients = uniquePatients.values.toList();
+
+              if (_searchQuery.isNotEmpty) {
+                patients = patients
+                    .where((p) => (p['patientName'] ?? '')
+                        .toString()
+                        .toLowerCase()
+                        .contains(_searchQuery))
+                    .toList();
+              }
+
+              if (patients.isEmpty) {
+                return const Center(child: Text("No patients found"));
+              }
+
+              return ListView.builder(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                itemCount: patients.length,
+                itemBuilder: (context, index) {
+                  final data = patients[index];
+                  final results = data['results'] as Map<String, dynamic>? ?? {};
+                  final severity = results['Severity'] ?? 'Normal';
+
+                  return Card(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    child: ListTile(
+                      leading: CircleAvatar(
+                        backgroundColor: Colors.blue.shade50,
+                        child: Text(
+                            (data['patientName'] ?? '?')[0],
+                            style: const TextStyle(
+                                color: Colors.blue, fontWeight: FontWeight.bold)),
+                      ),
+                      title: Text(data['patientName'] ?? 'Unknown'),
+                      subtitle: Text("Last Status: $severity"),
+                      trailing:
+                          const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
+                      onTap: () {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                                "Opening history for ${data['patientName']}"),
+                          ),
+                        );
+                      },
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildScheduleView(BuildContext context) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text("Appointments", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              IconButton(
+                onPressed: () => _clearCollection(context, 'appointments'),
+                icon: const Icon(Icons.delete_sweep, color: Colors.red),
+                tooltip: "Clear Schedule",
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance.collection('appointments').orderBy('requestDate', descending: true).snapshots(),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+              final docs = snapshot.data!.docs;
+              if (docs.isEmpty) return const Center(child: Text("No appointments found"));
+
+              return ListView.builder(
+                padding: const EdgeInsets.all(20),
+                itemCount: docs.length,
+                itemBuilder: (context, index) {
+                  final doc = docs[index];
+                  final data = doc.data() as Map<String, dynamic>;
+                  final status = data['status'] ?? 'pending';
+                  final patientName = data['patientName'] ?? 'Unknown';
+                  final timestamp = (data['requestDate'] as Timestamp?)?.toDate() ?? DateTime.now();
+                  final doctorMessage = data['doctorMessage'];
+
+                  Color statusColor = status == 'confirmed' ? Colors.green : (status == 'rejected' ? Colors.red : Colors.orange);
+
+                  return Card(
+                    margin: const EdgeInsets.only(bottom: 15),
+                    child: ExpansionTile(
+                      leading: CircleAvatar(
+                        backgroundColor: statusColor.withAlpha(30),
+                        child: Icon(Icons.calendar_today, color: statusColor),
+                      ),
+                      title: Text(patientName, style: const TextStyle(fontWeight: FontWeight.bold)),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text("Status: ${status.toUpperCase()}"),
+                          Text("Date: ${timestamp.toString().split('.')[0]}"),
+                          if (doctorMessage != null && doctorMessage.toString().isNotEmpty)
+                            Text("Msg: $doctorMessage", style: const TextStyle(fontStyle: FontStyle.italic, color: Colors.grey)),
+                        ],
+                      ),
+                      children: [
+                        if (status == 'pending')
+                          Padding(
+                            padding: const EdgeInsets.all(15),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: OutlinedButton(
+                                    onPressed: () => _showDecisionDialog(context, doc.id, 'rejected'),
+                                    style: OutlinedButton.styleFrom(foregroundColor: Colors.red, side: const BorderSide(color: Colors.red)),
+                                    child: const Text("Reject"),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: ElevatedButton(
+                                    onPressed: () => _showDecisionDialog(context, doc.id, 'confirmed'),
+                                    style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
+                                    child: const Text("Accept"),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _showDecisionDialog(BuildContext context, String docId, String status) {
+    final TextEditingController msgController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text("${status == 'confirmed' ? 'Accept' : 'Reject'} Appointment?"),
+        content: TextField(
+          controller: msgController,
+          decoration: const InputDecoration(
+            labelText: "Add a message (optional)",
+            border: OutlineInputBorder(),
+            hintText: "e.g. Please bring your previous reports."
+          ),
+          maxLines: 3,
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
           ElevatedButton(
             onPressed: () {
-              if (controller.text.isNotEmpty) {
-                _sendPrescriptionToCloud(report, controller.text);
-                Navigator.pop(ctx);
-              }
+              FirebaseFirestore.instance.collection('appointments').doc(docId).update({
+                'status': status,
+                'doctorMessage': msgController.text,
+                'processedAt': FieldValue.serverTimestamp(),
+              });
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Appointment $status")));
             },
-            child: const Text("Send to PHC"),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: status == 'confirmed' ? Colors.green : Colors.red,
+              foregroundColor: Colors.white
+            ),
+            child: Text("Confirm ${status == 'confirmed' ? 'Accept' : 'Reject'}"),
+          )
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHistoryView() {
+    return Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text("Diagnostic History",
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              IconButton(
+                onPressed: () => _clearCollection(context, 'diagnostic_reports'),
+                icon: const Icon(Icons.delete_sweep, color: Colors.red),
+                tooltip: "Clear History",
+              ),
+            ],
+          ),
+          const Text("Past reports and uploads",
+              style: TextStyle(color: Colors.grey)),
+          const SizedBox(height: 20),
+          Expanded(
+            child: StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('diagnostic_reports')
+                  .orderBy('timestamp', descending: true)
+                  .snapshots(),
+              builder: (context, snapshot) {
+                if (!snapshot.hasData) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                final docs = snapshot.data!.docs;
+                if (docs.isEmpty) {
+                  return const Center(child: Text("No history found"));
+                }
+
+                return ListView.builder(
+                  itemCount: docs.length,
+                  itemBuilder: (context, index) {
+                    final data =
+                        docs[index].data() as Map<String, dynamic>;
+                    final results = data['results'] as Map<String, dynamic>? ?? {};
+                    final timestamp =
+                        (data['timestamp'] as Timestamp?)?.toDate() ??
+                            DateTime.now();
+
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                      child: ExpansionTile(
+                        leading: CircleAvatar(
+                          backgroundColor: Colors.blue.shade50,
+                          child:
+                              const Icon(Icons.assignment, color: Colors.blue),
+                        ),
+                        title: Text(
+                          data['patientName'] ?? 'Unknown',
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        subtitle:
+                            Text("Date: ${timestamp.toString().split('.')[0]}"),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.chat_bubble_outline, color: Colors.blue),
+                              onPressed: () => _showChatDialog(docs[index].id, data['patientName'] ?? 'Unknown'),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: (data['status'] == 'reviewed')
+                                    ? Colors.green.withAlpha(26)
+                                    : Colors.orange.withAlpha(26),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                data['status']?.toUpperCase() ?? 'PENDING',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 10,
+                                  color: (data['status'] == 'reviewed')
+                                      ? Colors.green
+                                      : Colors.orange,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.all(15),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text("Vitals & Results:",
+                                    style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.grey)),
+                                const SizedBox(height: 5),
+                                ...results.entries.map(
+                                  (e) => Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 2),
+                                    child: Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Text(e.key),
+                                        Text(
+                                          e.value.toString(),
+                                          style: const TextStyle(
+                                              fontWeight: FontWeight.bold),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                if (data['prescription'] != null) ...[
+                                  const Divider(),
+                                  const Text("Doctor's Note:",
+                                      style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.blue)),
+                                  const SizedBox(height: 5),
+                                  Text(data['prescription']),
+                                ]
+                              ],
+                            ),
+                          )
+                        ],
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
           ),
         ],
       ),
     );
   }
 
-  Future<void> _sendPrescriptionToCloud(PatientReport report, String prescription) async {
-    await FirebaseFirestore.instance.collection('prescriptions').add({
-      'patientName': report.patientName,
-      'prescription': prescription,
-      'doctorName': widget.session.name,
-      'timestamp': FieldValue.serverTimestamp(),
-      'status': 'pending_dispense',
-    });
+  Future<void> _clearCollection(BuildContext context, String collectionPath) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Clear All Records?"),
+        content: const Text("This action cannot be undone. Are you sure you want to delete all records in this section?"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text("Delete All"),
+          ),
+        ],
+      ),
+    );
 
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Prescription sent for ${report.patientName}")),
-      );
+    if (confirm == true) {
+      final snapshot = await FirebaseFirestore.instance.collection(collectionPath).get();
+      final batch = FirebaseFirestore.instance.batch();
+      for (final doc in snapshot.docs) {
+        batch.delete(doc.reference);
+      }
+      await batch.commit();
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("All records cleared.")));
+      }
     }
   }
 
-  Future<void> _markAsReviewed(String reportId) async {
-    await FirebaseFirestore.instance.collection('diagnostic_reports').doc(reportId).update({'status': 'reviewed'});
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Report marked as reviewed."), backgroundColor: Colors.green),
-      );
-      _loadData();
-    }
+  Widget _buildStatCard(String title, String value, Color color) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [BoxShadow(color: Colors.black.withAlpha(13), blurRadius: 10)],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(value,
+              style: TextStyle(
+                  fontSize: 28, fontWeight: FontWeight.bold, color: color)),
+          const SizedBox(height: 5),
+          const Text("",
+              style: TextStyle(color: Colors.grey, fontSize: 14)),
+          Text(title,
+              style: const TextStyle(color: Colors.grey, fontSize: 14)),
+        ],
+      ),
+    );
+  }
+
+  void _showChatDialog(String reportId, String patientName) {
+    final TextEditingController msgController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text("Chat: $patientName"),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 400,
+          child: Column(
+            children: [
+              Expanded(
+                child: StreamBuilder<QuerySnapshot>(
+                  stream: FirebaseFirestore.instance
+                      .collection('diagnostic_reports')
+                      .doc(reportId)
+                      .collection('messages')
+                      .orderBy('timestamp', descending: true)
+                      .snapshots(),
+                  builder: (ctx, snapshot) {
+                    if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+                    final msgs = snapshot.data!.docs;
+                    if (msgs.isEmpty) return const Center(child: Text("No messages yet."));
+                    return ListView.builder(
+                      reverse: true,
+                      itemCount: msgs.length,
+                      itemBuilder: (ctx, i) {
+                        final m = msgs[i].data() as Map<String, dynamic>;
+                        final isMe = m['role'] == 'doctor';
+                        return Align(
+                          alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+                          child: Container(
+                            margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: isMe ? Colors.blue.shade100 : Colors.grey.shade200,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(m['message'], style: const TextStyle(fontSize: 14)),
+                                Text(m['senderName'] ?? '', style: const TextStyle(fontSize: 10, color: Colors.black54)),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+              const Divider(),
+              Row(
+                children: [
+                  Expanded(child: TextField(controller: msgController, decoration: const InputDecoration(hintText: "Type a message..."))),
+                  IconButton(
+                    icon: const Icon(Icons.send),
+                    onPressed: () {
+                      if (msgController.text.trim().isEmpty) return;
+                      FirebaseFirestore.instance
+                          .collection('diagnostic_reports')
+                          .doc(reportId)
+                          .collection('messages')
+                          .add({
+                        'message': msgController.text.trim(),
+                        'senderName': 'Dr. ${widget.session.username}',
+                        'role': 'doctor',
+                        'timestamp': FieldValue.serverTimestamp(),
+                      });
+                      msgController.clear();
+                    },
+                  )
+                ],
+              )
+            ],
+          ),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Close"))],
+      ),
+    );
+  }
+
+  // ==== FIX 3: pass BuildContext so context is defined ====
+  void _openPatientReview(
+      String docId, Map<String, dynamic> data, BuildContext context) async {
+    final TextEditingController prescriptionCtrl = TextEditingController();
+    final results = data['results'] as Map<String, dynamic>? ?? {};
+    final String name = data['patientName'] ?? 'Unknown';
+    final String diagnosis = results['Diagnosis'] ?? 'No diagnosis';
+
+    await showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text("Review: $name"),
+        content: SizedBox(
+          width: 500,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                      color: Colors.red.shade50,
+                      borderRadius: BorderRadius.circular(8)),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.warning, color: Colors.red),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              "AI Insight: $diagnosis",
+                              style: TextStyle(
+                                  color: Colors.red.shade900,
+                                  fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      const Divider(color: Colors.red),
+                      ...results.entries.map(
+                        (e) => Padding(
+                          padding:
+                              const EdgeInsets.symmetric(vertical: 2),
+                          child: Row(
+                            mainAxisAlignment:
+                                MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(e.key, style: const TextStyle(fontSize: 13)),
+                              Text(
+                                e.value.toString(),
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold, fontSize: 13),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+                const Text("Prescription / Advice:",
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: prescriptionCtrl,
+                  maxLines: 4,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    hintText:
+                        "Enter medication, dosage, and instructions...",
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          OutlinedButton.icon(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("Calling PHC Worker...")),
+              );
+            },
+            icon: const Icon(Icons.video_call),
+            label: const Text("Video Call"),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              FirebaseFirestore.instance
+                  .collection('diagnostic_reports')
+                  .doc(docId)
+                  .update({
+                'status': 'reviewed',
+                'prescription': prescriptionCtrl.text,
+                'reviewedAt': FieldValue.serverTimestamp(),
+              });
+              Navigator.pop(dialogContext);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                    content: Text("Prescription Sent to PHC!")),
+              );
+            },
+            child: const Text("Send Prescription"),
+          ),
+        ],
+      ),
+    );
+    prescriptionCtrl.dispose();
   }
 }

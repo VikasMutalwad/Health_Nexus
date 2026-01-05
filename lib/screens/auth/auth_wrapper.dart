@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../models/user_session.dart';
-import 'login_screen.dart';
+import 'auth_screen.dart';
 import '../patient/patient_dashboard.dart';
 import '../doctor/doctor_dashboard.dart'; 
 import '../worker/worker_dashboard.dart'; 
@@ -140,7 +140,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
   @override
   Widget build(BuildContext context) {
     if (_session == null) {
-      return LoginScreen(
+      return AuthScreen(
           onLogin: _login,
           onRegister: _register,
           onForgotPassword: _forgotPassword, 

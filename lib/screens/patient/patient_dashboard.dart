@@ -263,11 +263,11 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
                 try {
                   final user = FirebaseAuth.instance.currentUser;
                   await user?.updatePassword(passController.text);
-                  if (!context.mounted) return;
+                  if (!mounted) return;
                   Navigator.pop(ctx);
                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Password updated successfully")));
                 } catch (e) {
-                  if (!context.mounted) return;
+                  if (!mounted) return;
                   Navigator.pop(ctx);
                   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
                 }
@@ -284,8 +284,7 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
     showGeneralDialog(
       context: context,
       barrierDismissible: false,
-      barrierLabel: "Scan",
-      barrierColor: Colors.black.withOpacity(0.9),
+      barrierLabel: "Scan",      barrierColor: Colors.black.withAlpha(230),
       transitionDuration: const Duration(milliseconds: 400),
       pageBuilder: (ctx, anim1, anim2) => const _AIScanOverlay(),
     ).then((result) async {
@@ -442,8 +441,8 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
                       margin: const EdgeInsets.only(bottom: 20),
                       padding: const EdgeInsets.all(15),
                       decoration: BoxDecoration(
-                        color: (item['color'] as Color).withOpacity(0.05),
-                        border: Border.all(color: (item['color'] as Color).withOpacity(0.3)),
+                        color: (item['color'] as Color).withAlpha(13),
+                        border: Border.all(color: (item['color'] as Color).withAlpha(77)),
                         borderRadius: BorderRadius.circular(15),
                       ),
                       child: Column(
@@ -537,10 +536,9 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
                   child: Container(
                     margin: const EdgeInsets.only(bottom: 20),
                     padding: const EdgeInsets.all(15),
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(colors: [Theme.of(context).colorScheme.secondary, const Color(0xFF60A5FA)]),
+                    decoration: BoxDecoration(                      gradient: LinearGradient(colors: [Theme.of(context).colorScheme.secondary, const Color(0xFF60A5FA)]),
                       borderRadius: BorderRadius.circular(15),
-                      boxShadow: [BoxShadow(color: Colors.blue.withOpacity(0.3), blurRadius: 8, offset: const Offset(0, 4))],
+                      boxShadow: [BoxShadow(color: Colors.blue.withAlpha(77), blurRadius: 8, offset: const Offset(0, 4))],
                     ),
                     child: const Row(
                       children: [
@@ -598,8 +596,7 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
         ),
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF0F172A).withOpacity(0.3),
+          BoxShadow(            color: const Color(0xFF0F172A).withAlpha(77),
             blurRadius: 10,
             offset: const Offset(0, 5),
           ),
@@ -1077,7 +1074,7 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
             Container(
               width: 50, height: 50,
               decoration: BoxDecoration(
-                color: isSelected ? Colors.white.withOpacity(0.1) : bgColor,
+                color: isSelected ? Colors.white.withAlpha(26) : bgColor,
                 borderRadius: BorderRadius.circular(25),
               ),
               child: title == 'Heart Rate'
@@ -1150,6 +1147,11 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
                 final data = docs[i].data() as Map<String, dynamic>;
                 final status = data['status'] ?? 'pending';
                 final isConfirmed = status == 'confirmed';
+                final isRejected = status == 'rejected';
+                final doctorMessage = data['doctorMessage'];
+
+                Color statusColor = isConfirmed ? const Color(0xFF28A745) : (isRejected ? Colors.red : const Color(0xFFFFA000));
+                Color bgColor = isConfirmed ? const Color(0xFFE2F6ED) : (isRejected ? Colors.red.shade50 : const Color(0xFFFFF2D8));
                 
                 return Container(
                   margin: const EdgeInsets.only(bottom: 15),
@@ -1162,20 +1164,36 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
                   child: ListTile(
                     contentPadding: EdgeInsets.zero,
                     leading: CircleAvatar(
-                      backgroundColor: isConfirmed ? const Color(0xFFE2F6ED) : const Color(0xFFFFF2D8),
-                      child: Icon(Icons.calendar_today, color: isConfirmed ? const Color(0xFF28A745) : const Color(0xFFFFA000)),
+                      backgroundColor: bgColor,
+                      child: Icon(Icons.calendar_today, color: statusColor),
                     ),
-                    title: Text(isConfirmed ? "Appointment Confirmed" : "Request Pending", style: const TextStyle(fontWeight: FontWeight.bold)),
-                    subtitle: Text(isConfirmed ? "Doctor has accepted your request." : "Waiting for doctor approval."),
+                    title: Text(
+                      isConfirmed ? "Appointment Confirmed" : (isRejected ? "Appointment Rejected" : "Request Pending"), 
+                      style: const TextStyle(fontWeight: FontWeight.bold)
+                    ),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(isConfirmed 
+                          ? "Doctor has accepted your request." 
+                          : (isRejected ? "Doctor has declined this request." : "Waiting for doctor approval.")
+                        ),
+                        if (doctorMessage != null && doctorMessage.toString().isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4.0),
+                            child: Text("Note: $doctorMessage", style: const TextStyle(color: Colors.black87, fontStyle: FontStyle.italic)),
+                          ),
+                      ],
+                    ),
                     trailing: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                       decoration: BoxDecoration(
-                        color: isConfirmed ? const Color(0xFFE2F6ED) : const Color(0xFFFFF2D8),
+                        color: bgColor,
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: Text(status.toUpperCase(), style: TextStyle(
                         fontSize: 12, 
-                        color: isConfirmed ? const Color(0xFF28A745) : const Color(0xFFFFA000),
+                        color: statusColor,
                         fontWeight: FontWeight.bold
                       )),
                     ),
@@ -1281,8 +1299,7 @@ class _AIScanOverlayState extends State<_AIScanOverlay> with SingleTickerProvide
               decoration: BoxDecoration(
                 border: Border.all(color: const Color(0xFF09E5AB), width: 2),
                 borderRadius: BorderRadius.circular(20),
-                color: Colors.black26,
-                boxShadow: [BoxShadow(color: const Color(0xFF09E5AB).withOpacity(0.2), blurRadius: 20, spreadRadius: 5)],
+                color: Colors.black26,                boxShadow: [BoxShadow(color: const Color(0xFF09E5AB).withAlpha(51), blurRadius: 20, spreadRadius: 5)],
               ),
               child: Stack(
                 children: [
@@ -1297,8 +1314,7 @@ class _AIScanOverlayState extends State<_AIScanOverlay> with SingleTickerProvide
                         child: Container(
                           height: 4,
                           decoration: BoxDecoration(
-                            color: const Color(0xFF09E5AB),
-                            boxShadow: [BoxShadow(color: const Color(0xFF09E5AB).withOpacity(0.8), blurRadius: 10, spreadRadius: 2)],
+                            color: const Color(0xFF09E5AB),                            boxShadow: [BoxShadow(color: const Color(0xFF09E5AB).withAlpha(204), blurRadius: 10, spreadRadius: 2)],
                           ),
                         ),
                       );
