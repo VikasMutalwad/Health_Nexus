@@ -572,7 +572,7 @@ class _HealthWorkerDashboardState extends State<HealthWorkerDashboard> {
           mainAxisSize: MainAxisSize.min,
           children: [
             DropdownButtonFormField<String>(
-              value: selectedItem,
+              initialValue: selectedItem,
               items: ["Glucose Strips", "Urine Strips", "Lancets", "Batteries", "Sanitizer"]
                   .map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
               onChanged: (v) => selectedItem = v!,

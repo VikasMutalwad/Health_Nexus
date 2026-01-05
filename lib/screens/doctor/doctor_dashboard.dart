@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../models/user_session.dart';
-import '../../models/health_record.dart';
-import 'dart:math';
 
 class DoctorDashboard extends StatefulWidget {
   final UserSession session;

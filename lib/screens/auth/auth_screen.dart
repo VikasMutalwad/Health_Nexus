@@ -203,7 +203,7 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
                                 if (!_isLogin) ...[
                                   const SizedBox(height: 15),
                                   DropdownButtonFormField<String>(
-                                    value: _selectedRole,
+                                    initialValue: _selectedRole,
                                     dropdownColor: Colors.blueGrey.shade900,
                                     style: const TextStyle(color: Colors.white),
                                     decoration: _inputDecoration("Role", Icons.work),
@@ -217,7 +217,7 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
                                       const SizedBox(width: 15),
                                       Expanded(
                                         child: DropdownButtonFormField<String>(
-                                          value: _selectedGender,
+                                          initialValue: _selectedGender,
                                           dropdownColor: Colors.blueGrey.shade900,
                                           style: const TextStyle(color: Colors.white),
                                           decoration: _inputDecoration("Gender", Icons.person),
