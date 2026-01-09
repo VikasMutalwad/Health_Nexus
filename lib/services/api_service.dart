@@ -38,6 +38,25 @@ class ApiService {
     }
   }
 
+  // POST: Save Health Data (Heart rate, BP, etc.)
+  Future<void> saveHealthData(Map<String, dynamic> data) async {
+    final token = await _getToken();
+    if (token == null) throw Exception('User not logged in');
+
+    final response = await http.post(
+      Uri.parse('$baseUrl/api/health-data'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode(data),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to save health data: ${response.body}');
+    }
+  }
+
   // GET: Fetch User Profile
   Future<Map<String, dynamic>> getUserProfile() async {
     final token = await _getToken();

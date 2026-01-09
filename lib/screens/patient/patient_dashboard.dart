@@ -3,7 +3,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:health_nexus/widgets/chart_pointer.dart';
 import '../../models/user_session.dart';
-import 'dart:math';
 
 class PatientDashboard extends StatefulWidget {
   final UserSession session;
@@ -133,9 +132,9 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
                setState(() => _selectedIndex = 3);
                Navigator.pop(context);
              }),
-             ListTile(leading: const Icon(Icons.history), title: const Text("AI Scan History"), onTap: () {
+             ListTile(leading: const Icon(Icons.history), title: const Text("Past Visit Reports"), onTap: () {
                Navigator.pop(context);
-               Navigator.push(context, MaterialPageRoute(builder: (context) => AIScanHistoryScreen(userId: widget.session.userId)));
+               Navigator.push(context, MaterialPageRoute(builder: (context) => PastVisitReportsScreen(userId: widget.session.userId)));
              }),
              ListTile(leading: const Icon(Icons.person_outline), title: const Text("Profile Settings"), onTap: () => setState(() { _selectedIndex = 4; Navigator.pop(context); })),
              ListTile(leading: const Icon(Icons.lock_outline), title: const Text("Change Password"), onTap: _showChangePasswordDialog),
@@ -159,12 +158,6 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
           BottomNavigationBarItem(icon: Icon(Icons.person), label: "Profile"),
         ],
       ),
-      floatingActionButton: _selectedIndex == 0 ? FloatingActionButton.extended(
-        onPressed: _startAIScan,
-        backgroundColor: const Color(0xFF09E5AB),
-        icon: const Icon(Icons.camera_alt, color: Colors.white),
-        label: const Text("AI Scan", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-      ) : null,
     );
   }
 
@@ -280,241 +273,11 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
     );
   }
 
-  void _startAIScan() {
-    showGeneralDialog(
-      context: context,
-      barrierDismissible: false,
-      barrierLabel: "Scan",      barrierColor: Colors.black.withAlpha(230),
-      transitionDuration: const Duration(milliseconds: 400),
-      pageBuilder: (ctx, anim1, anim2) => const _AIScanOverlay(),
-    ).then((result) async {
-      if (result != null && result is Map<String, double>) {
-        // Save to Firestore
-        try {
-          await FirebaseFirestore.instance
-              .collection('users')
-              .doc(widget.session.userId)
-              .collection('scan_history')
-              .add({
-            'timestamp': FieldValue.serverTimestamp(),
-            'vitals': result,
-          });
-        } catch (e) {
-          debugPrint("Error saving scan history: $e");
-        }
-
-        setState(() {
-          _vitalData['Heart Rate']?.add(result['Heart Rate']!);
-          _vitalData['SpO2']?.add(result['SpO2']!);
-          _vitalData['Body Temp']?.add(result['Body Temp']!);
-          _vitalData['Blood Pressure']?.add(result['Blood Pressure']!);
-          
-          // Keep list size manageable
-          if (_vitalData['Heart Rate']!.length > 20) {
-             _vitalData.forEach((key, list) {
-               if (list.isNotEmpty) list.removeAt(0);
-             });
-          }
-        });
-        _syncMockVitals();
-        // Show AI Analysis Report instead of just a snackbar
-        _showAIAnalysisDialog(result);
-      }
-    });
-  }
-
   Widget _buildResponsiveContent({required Widget child}) {
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 1000),
         child: child,
-      ),
-    );
-  }
-
-  void _showAIAnalysisDialog(Map<String, double> vitals) {
-    List<Map<String, dynamic>> analysis = [];
-
-    // Temperature Analysis
-    double temp = vitals['Body Temp']!;
-    if (temp > 37.5) {
-      analysis.add({
-        'vital': 'Body Temperature',
-        'value': '${temp.toStringAsFixed(1)} °C',
-        'status': 'High (Fever)',
-        'color': Colors.red,
-        'illness': 'Pyrexia (Fever)',
-        'reasons': ['Viral Infection', 'Bacterial Infection', 'Heat Exhaustion'],
-        'remedies': ['Stay Hydrated', 'Rest', 'Cool Compresses'],
-        'medications': ['Paracetamol (Dolo 650)', 'Ibuprofen']
-      });
-    }
-
-    // Heart Rate Analysis
-    double hr = vitals['Heart Rate']!;
-    if (hr > 100) {
-      analysis.add({
-        'vital': 'Heart Rate',
-        'value': '${hr.toStringAsFixed(0)} bpm',
-        'status': 'High (Tachycardia)',
-        'color': Colors.red,
-        'illness': 'Tachycardia',
-        'reasons': ['Stress/Anxiety', 'Physical Exertion', 'Caffeine'],
-        'remedies': ['Deep Breathing', 'Meditation', 'Reduce Caffeine'],
-        'medications': ['Beta-blockers (Consult Doctor)']
-      });
-    }
-
-    // BP Analysis
-    double bp = vitals['Blood Pressure']!;
-    if (bp > 130) {
-      analysis.add({
-        'vital': 'Blood Pressure',
-        'value': '${bp.toStringAsFixed(0)} mmHg',
-        'status': 'High (Hypertension)',
-        'color': Colors.red,
-        'illness': 'Hypertension',
-        'reasons': ['High Sodium Diet', 'Stress', 'Lack of Activity'],
-        'remedies': ['Low Sodium Diet', 'Exercise', 'Stress Management'],
-        'medications': ['Amlodipine', 'Telmisartan (Consult Doctor)']
-      });
-    }
-
-    // SpO2 Analysis
-    double spo2 = vitals['SpO2']!;
-    if (spo2 < 95) {
-      analysis.add({
-        'vital': 'SpO2',
-        'value': '${spo2.toStringAsFixed(0)} %',
-        'status': 'Low (Hypoxia)',
-        'color': Colors.red,
-        'illness': 'Hypoxia / Respiratory Issue',
-        'reasons': ['Respiratory Infection', 'Asthma', 'High Altitude'],
-        'remedies': ['Deep Breathing', 'Upright Posture', 'Fresh Air'],
-        'medications': ['Inhalers (if prescribed)', 'Oxygen Therapy']
-      });
-    }
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        height: MediaQuery.of(context).size.height * 0.85,
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
-        ),
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(child: Container(width: 50, height: 5, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10)))),
-            const SizedBox(height: 20),
-            const Text("AI Health Analysis", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-            const Text("Based on your recent scan", style: TextStyle(color: Colors.grey)),
-            const SizedBox(height: 20),
-            if (analysis.isEmpty)
-              Expanded(
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.check_circle, color: Colors.green, size: 80),
-                      const SizedBox(height: 20),
-                      const Text("All Vitals Normal", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 10),
-                      const Text("You are in great shape! Keep it up.", style: TextStyle(color: Colors.grey)),
-                      const SizedBox(height: 30),
-                      ElevatedButton(onPressed: () => Navigator.pop(context), child: const Text("Close"))
-                    ],
-                  ),
-                ),
-              )
-            else
-              Expanded(
-                child: ListView.builder(
-                  itemCount: analysis.length,
-                  itemBuilder: (context, index) {
-                    final item = analysis[index];
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 20),
-                      padding: const EdgeInsets.all(15),
-                      decoration: BoxDecoration(
-                        color: (item['color'] as Color).withAlpha(13),
-                        border: Border.all(color: (item['color'] as Color).withAlpha(77)),
-                        borderRadius: BorderRadius.circular(15),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(item['vital'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                                decoration: BoxDecoration(color: item['color'], borderRadius: BorderRadius.circular(20)),
-                                child: Text(item['status'], style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 5),
-                          Text("Measured: ${item['value']}", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                          const Divider(),
-                          if (item['illness'] != null) ...[
-                            const Text("Potential Indication:", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey)),
-                            Text(item['illness'], style: const TextStyle(fontWeight: FontWeight.w500)),
-                            const SizedBox(height: 10),
-                          ],
-                          const Text("Possible Reasons:", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey)),
-                          Wrap(
-                            spacing: 5,
-                            children: (item['reasons'] as List<String>).map((r) => Chip(label: Text(r, style: const TextStyle(fontSize: 10)), visualDensity: VisualDensity.compact)).toList(),
-                          ),
-                          const SizedBox(height: 10),
-                          const Text("Suggested Remedies:", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey)),
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: (item['remedies'] as List<String>).map((r) => Text("• $r", style: const TextStyle(fontSize: 13))).toList(),
-                          ),
-                          const SizedBox(height: 10),
-                          Container(
-                            padding: const EdgeInsets.all(10),
-                            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10)),
-                            child: Row(
-                              children: [
-                                const Icon(Icons.medication, color: Colors.blue),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      const Text("Suggested OTC Meds:", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                                      Text((item['medications'] as List<String>).join(", "), style: const TextStyle(fontSize: 12)),
-                                    ],
-                                  ),
-                                )
-                              ],
-                            ),
-                          )
-                        ],
-                      ),
-                    );
-                  },
-                ),
-              ),
-              const SizedBox(height: 10),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0F172A), foregroundColor: Colors.white),
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text("Acknowledge & Save"),
-                ),
-              )
-          ],
-        ),
       ),
     );
   }
@@ -632,9 +395,9 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text("Health Score: Excellent", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                Text("Health Score (Last Visit)", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
                 SizedBox(height: 5),
-                Text("Your vitals are stable. Keep up the good work!", style: TextStyle(color: Colors.white70, fontSize: 13)),
+                Text("Based on report from Oct 24, 2023", style: TextStyle(color: Colors.white70, fontSize: 13)),
               ],
             ),
           ),
@@ -783,12 +546,15 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Text("Live Vitals", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            TextButton.icon(
-              onPressed: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Syncing with Wearable Device..."))),
-              icon: const Icon(Icons.watch, size: 16),
-              label: const Text("Sync Wearable"),
-            )
+            const Text("Last Visit Report", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade200,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Text("Oct 24, 2023", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black54)),
+            ),
           ],
         ),
         const SizedBox(height: 10),
@@ -1235,155 +1001,103 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
   }
 }
 
-class _AIScanOverlay extends StatefulWidget {
-  const _AIScanOverlay();
-
-  @override
-  State<_AIScanOverlay> createState() => _AIScanOverlayState();
-}
-
-class _AIScanOverlayState extends State<_AIScanOverlay> with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  String _statusText = "Initializing Camera...";
-  
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat(reverse: true);
-    _startScanSequence();
-  }
-
-  void _startScanSequence() async {
-    await Future.delayed(const Duration(seconds: 1));
-    if(mounted) setState(() => _statusText = "Detecting Face...");
-    await Future.delayed(const Duration(seconds: 1));
-    if(mounted) setState(() => _statusText = "Scanning Heart Rate (PPG)...");
-    await Future.delayed(const Duration(seconds: 1));
-    if(mounted) setState(() => _statusText = "Analyzing SpO2 Levels...");
-    await Future.delayed(const Duration(seconds: 1));
-    if(mounted) setState(() => _statusText = "Measuring Body Temperature...");
-    await Future.delayed(const Duration(seconds: 1));
-    if(mounted) setState(() => _statusText = "Estimating Blood Pressure...");
-    await Future.delayed(const Duration(seconds: 1));
-    if(mounted) setState(() => _statusText = "Finalizing Health Analysis...");
-    await Future.delayed(const Duration(seconds: 1));
-    
-    if(mounted) {
-      final random = Random();
-      Navigator.pop(context, {
-        'Heart Rate': 60.0 + random.nextInt(50),
-        'SpO2': 93.0 + random.nextInt(7),
-        'Body Temp': 36.0 + (random.nextDouble() * 2.5),
-        'Blood Pressure': 110.0 + random.nextInt(35),
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 280,
-              height: 280,
-              decoration: BoxDecoration(
-                border: Border.all(color: const Color(0xFF09E5AB), width: 2),
-                borderRadius: BorderRadius.circular(20),
-                color: Colors.black26,                boxShadow: [BoxShadow(color: const Color(0xFF09E5AB).withAlpha(51), blurRadius: 20, spreadRadius: 5)],
-              ),
-              child: Stack(
-                children: [
-                  const Center(child: Icon(Icons.face_retouching_natural, size: 180, color: Colors.white12)),
-                  AnimatedBuilder(
-                    animation: _controller,
-                    builder: (context, child) {
-                      return Positioned(
-                        top: _controller.value * 260,
-                        left: 0,
-                        right: 0,
-                        child: Container(
-                          height: 4,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF09E5AB),                            boxShadow: [BoxShadow(color: const Color(0xFF09E5AB).withAlpha(204), blurRadius: 10, spreadRadius: 2)],
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 40),
-            Text(_statusText, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1)),
-            const SizedBox(height: 20),
-            const SizedBox(
-              width: 200,
-              child: LinearProgressIndicator(color: Color(0xFF09E5AB), backgroundColor: Colors.white12),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class AIScanHistoryScreen extends StatelessWidget {
+class PastVisitReportsScreen extends StatelessWidget {
   final String userId;
-  const AIScanHistoryScreen({super.key, required this.userId});
+  const PastVisitReportsScreen({super.key, required this.userId});
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("AI Scan History")),
+      appBar: AppBar(
+        title: const Text("Past Visit Reports", style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold)),
+        backgroundColor: Colors.white,
+        elevation: 0,
+        iconTheme: const IconThemeData(color: Colors.black87),
+      ),
       body: StreamBuilder<QuerySnapshot>(
         stream: FirebaseFirestore.instance
             .collection('users')
             .doc(userId)
-            .collection('scan_history')
-            .orderBy('timestamp', descending: true)
+            .collection('visit_reports')
+            .orderBy('date', descending: true)
             .snapshots(),
         builder: (context, snapshot) {
-          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-          final docs = snapshot.data!.docs;
-          if (docs.isEmpty) return const Center(child: Text("No scan history found."));
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          
+          final docs = snapshot.data?.docs ?? [];
+          
+          if (docs.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.folder_open, size: 80, color: Colors.grey.shade300),
+                  const SizedBox(height: 20),
+                  const Text("No reports available", style: TextStyle(color: Colors.grey, fontSize: 18)),
+                ],
+              ),
+            );
+          }
 
           return ListView.builder(
+            padding: const EdgeInsets.all(16),
             itemCount: docs.length,
             itemBuilder: (context, index) {
               final data = docs[index].data() as Map<String, dynamic>;
-              final vitals = data['vitals'] as Map<String, dynamic>;
-              final timestamp = (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now();
+              final date = (data['date'] as Timestamp?)?.toDate() ?? DateTime.now();
+              final doctorName = data['doctorName'] ?? 'General Practitioner';
+              final diagnosis = data['diagnosis'] ?? 'Regular Checkup';
+              final hospital = data['hospital'] ?? 'Health Nexus Clinic';
 
               return Card(
-                margin: const EdgeInsets.symmetric(horizontal: 15, vertical: 8),
-                child: ExpansionTile(
-                  title: Text("Scan: ${timestamp.toString().split('.')[0]}"),
-                  subtitle: Text("HR: ${vitals['Heart Rate']?.toStringAsFixed(0)} bpm | Temp: ${vitals['Body Temp']?.toStringAsFixed(1)} °C"),
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.all(15),
-                      child: Wrap(
-                        spacing: 20,
-                        runSpacing: 10,
-                        children: vitals.entries.map((e) => Column(
-                          children: [
-                            Text(e.key, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                            Text(e.value.toStringAsFixed(1), style: const TextStyle(fontWeight: FontWeight.bold)),
-                          ],
-                        )).toList(),
+                margin: const EdgeInsets.only(bottom: 16),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                elevation: 2,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            "${date.day}/${date.month}/${date.year}",
+                            style: const TextStyle(color: Colors.grey, fontWeight: FontWeight.bold),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFE0F2FE),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Text("Completed", style: TextStyle(color: Color(0xFF0288D1), fontSize: 12, fontWeight: FontWeight.bold)),
+                          ),
+                        ],
                       ),
-                    )
-                  ],
+                      const SizedBox(height: 12),
+                      Text(diagnosis, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 4),
+                      Text("Dr. $doctorName • $hospital", style: const TextStyle(color: Colors.black54)),
+                      const SizedBox(height: 16),
+                      const Divider(),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton.icon(
+                            onPressed: () {
+                              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Downloading PDF Report...")));
+                            },
+                            icon: const Icon(Icons.download_rounded, size: 20),
+                            label: const Text("Download PDF"),
+                            style: TextButton.styleFrom(foregroundColor: const Color(0xFF09E5AB)),
+                          ),
+                        ],
+                      )
+                    ],
+                  ),
                 ),
               );
             },
