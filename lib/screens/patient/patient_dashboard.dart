@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:health_nexus/widgets/chart_pointer.dart';
 import '../../models/user_session.dart';
 
@@ -61,6 +62,7 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
 
     _heartbeatController = AnimationController(vsync: this, duration: const Duration(milliseconds: 800))..repeat(reverse: true);
     _heartbeatAnimation = Tween<double>(begin: 1.0, end: 1.25).animate(CurvedAnimation(parent: _heartbeatController, curve: Curves.easeInOut));
+    _setupPushNotifications();
   }
 
   @override
@@ -69,6 +71,41 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
     _nameController.dispose(); _ageController.dispose();
     _weightController.dispose(); _heightController.dispose(); _dobController.dispose();
     super.dispose();
+  }
+
+  Future<void> _setupPushNotifications() async {
+    try {
+      FirebaseMessaging messaging = FirebaseMessaging.instance;
+      
+      // Request permission for notifications
+      NotificationSettings settings = await messaging.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
+
+      if (settings.authorizationStatus == AuthorizationStatus.authorized) {
+        // Get FCM token and save to user profile
+        String? token = await messaging.getToken();
+        if (token != null) {
+          await FirebaseFirestore.instance.collection('users').doc(widget.session.userId).set({
+            'fcmToken': token,
+          }, SetOptions(merge: true));
+        }
+
+        // Listen for foreground messages
+        FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+          if (message.notification != null) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text("Reminder: ${message.notification!.title}"),
+              action: SnackBarAction(label: "View", onPressed: _showNotifications),
+            ));
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint("Error setting up notifications: $e");
+    }
   }
 
   void _syncMockVitals() {
