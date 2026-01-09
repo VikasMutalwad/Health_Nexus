@@ -7,7 +7,7 @@ import 'package:http/http.dart' as http;
 class ApiService {
   // Use the live URL for release builds and localhost for debug builds.
   final String baseUrl = kReleaseMode
-      ? 'https://health-nexus-backend.onrender.com' // <-- IMPORTANT: Replace with your actual Render URL
+      ? 'https://health-nexus-3a2x.onrender.com' // <-- IMPORTANT: Replace with your actual Render URL
       : Platform.isAndroid
           ? 'http://10.0.2.2:3000'
           : 'http://localhost:3000';
