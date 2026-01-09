@@ -878,20 +878,7 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
         SizedBox(
           width: double.infinity,
           child: ElevatedButton.icon(
-            onPressed: () async {
-              // Create a request
-              Map<String, dynamic> currentVitals = {};
-              _vitalData.forEach((k, v) { if(v.isNotEmpty) currentVitals[k] = v.last; });
-              
-              await FirebaseFirestore.instance.collection('appointments').add({
-                'patientId': widget.session.userId,
-                'patientName': widget.session.name.isNotEmpty ? widget.session.name : widget.session.username,
-                'status': 'pending',
-                'requestDate': FieldValue.serverTimestamp(),
-                'vitals': currentVitals,
-              });
-              if(mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Appointment Request Sent to Doctors")));
-            },
+            onPressed: _showBookAppointmentDialog,
             icon: const Icon(Icons.add_circle_outline),
             label: const Text("Book New Appointment"),
             style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF09E5AB), foregroundColor: Colors.white),
@@ -915,6 +902,13 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
                 final isConfirmed = status == 'confirmed';
                 final isRejected = status == 'rejected';
                 final doctorMessage = data['doctorMessage'];
+                
+                final type = data['type'] ?? 'Clinic Visit';
+                final Timestamp? apptTimestamp = data['appointmentDate'];
+                final apptDate = apptTimestamp?.toDate();
+                final dateStr = apptDate != null 
+                    ? "${apptDate.day}/${apptDate.month} ${apptDate.hour.toString().padLeft(2,'0')}:${apptDate.minute.toString().padLeft(2,'0')}" 
+                    : "Date Pending";
 
                 Color statusColor = isConfirmed ? const Color(0xFF28A745) : (isRejected ? Colors.red : const Color(0xFFFFA000));
                 Color bgColor = isConfirmed ? const Color(0xFFE2F6ED) : (isRejected ? Colors.red.shade50 : const Color(0xFFFFF2D8));
@@ -931,10 +925,10 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
                     contentPadding: EdgeInsets.zero,
                     leading: CircleAvatar(
                       backgroundColor: bgColor,
-                      child: Icon(Icons.calendar_today, color: statusColor),
+                      child: Icon(type == 'Video Call' ? Icons.videocam : (type == 'Audio Call' ? Icons.call : (type == 'Chat' ? Icons.chat : Icons.calendar_today)), color: statusColor),
                     ),
                     title: Text(
-                      isConfirmed ? "Appointment Confirmed" : (isRejected ? "Appointment Rejected" : "Request Pending"), 
+                      "$type ($dateStr)", 
                       style: const TextStyle(fontWeight: FontWeight.bold)
                     ),
                     subtitle: Column(
@@ -981,6 +975,95 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
           },
         ),
       ],
+    );
+  }
+
+  void _showBookAppointmentDialog() {
+    DateTime? selectedDate;
+    TimeOfDay? selectedTime;
+    String selectedType = 'Clinic Visit';
+    final List<String> appointmentTypes = ['Clinic Visit', 'Home Visit', 'Video Call', 'Audio Call', 'Chat'];
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text("Book Appointment"),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text("Select Date & Time", style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () async {
+                            final date = await showDatePicker(context: context, initialDate: DateTime.now(), firstDate: DateTime.now(), lastDate: DateTime.now().add(const Duration(days: 365)));
+                            if (date != null) setState(() => selectedDate = date);
+                          },
+                          icon: const Icon(Icons.calendar_today, size: 18),
+                          label: Text(selectedDate == null ? "Date" : "${selectedDate!.day}/${selectedDate!.month}/${selectedDate!.year}", style: const TextStyle(fontSize: 12)),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () async {
+                            final time = await showTimePicker(context: context, initialTime: TimeOfDay.now());
+                            if (time != null) setState(() => selectedTime = time);
+                          },
+                          icon: const Icon(Icons.access_time, size: 18),
+                          label: Text(selectedTime == null ? "Time" : selectedTime!.format(context), style: const TextStyle(fontSize: 12)),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  const Text("Appointment Type", style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 10),
+                  DropdownButtonFormField<String>(
+                    value: selectedType,
+                    decoration: const InputDecoration(border: OutlineInputBorder(), contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 5)),
+                    items: appointmentTypes.map((t) => DropdownMenuItem(value: t, child: Text(t))).toList(),
+                    onChanged: (v) => setState(() => selectedType = v!),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+                ElevatedButton(
+                  onPressed: () async {
+                    if (selectedDate == null || selectedTime == null) {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please select date and time")));
+                      return;
+                    }
+                    final DateTime appointmentDateTime = DateTime(selectedDate!.year, selectedDate!.month, selectedDate!.day, selectedTime!.hour, selectedTime!.minute);
+                    Map<String, dynamic> currentVitals = {};
+                    _vitalData.forEach((k, v) { if(v.isNotEmpty) currentVitals[k] = v.last; });
+
+                    await FirebaseFirestore.instance.collection('appointments').add({
+                      'patientId': widget.session.userId,
+                      'patientName': widget.session.name.isNotEmpty ? widget.session.name : widget.session.username,
+                      'status': 'pending',
+                      'requestDate': FieldValue.serverTimestamp(),
+                      'appointmentDate': Timestamp.fromDate(appointmentDateTime),
+                      'type': selectedType,
+                      'vitals': currentVitals,
+                    });
+                    if (mounted) { Navigator.pop(ctx); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Appointment Request Sent"))); }
+                  },
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF09E5AB), foregroundColor: Colors.white),
+                  child: const Text("Book"),
+                ),
+              ],
+            );
+          }
+        );
+      },
     );
   }
 
