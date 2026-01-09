@@ -1,14 +1,16 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 class ApiService {
-  // Android Emulator uses 10.0.2.2 to access the host machine's localhost.
-  // iOS Simulator uses localhost directly.
-  final String baseUrl = Platform.isAndroid 
-      ? 'http://10.0.2.2:3000' 
-      : 'http://localhost:3000';
+  // Use the live URL for release builds and localhost for debug builds.
+  final String baseUrl = kReleaseMode
+      ? 'https://health-nexus-backend.onrender.com' // <-- IMPORTANT: Replace with your actual Render URL
+      : Platform.isAndroid
+          ? 'http://10.0.2.2:3000'
+          : 'http://localhost:3000';
 
   // Helper to get the current user's ID token
   Future<String?> _getToken() async {

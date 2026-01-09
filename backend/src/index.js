@@ -15,7 +15,14 @@ app.use(express.json());
 // Initialize Firebase Admin SDK
 // TODO: Download your service account key from Firebase Console -> Project Settings -> Service Accounts
 // and save it as 'serviceAccountKey.json' in the 'backend' directory.
-const serviceAccount = require('../serviceAccountKey.json');
+let serviceAccount;
+if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+  // Production: Use environment variable
+  serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+} else {
+  // Development: Use local file
+  serviceAccount = require('../serviceAccountKey.json');
+}
 
 try {
   admin.initializeApp({
