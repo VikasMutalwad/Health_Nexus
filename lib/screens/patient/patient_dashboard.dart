@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:google_generative_ai/google_generative_ai.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:health_nexus/widgets/chart_pointer.dart';
 import '../../models/user_session.dart';
 
@@ -29,6 +31,13 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
   double _weight = 70.0;
   double _height = 175.0;
   String _gender = "Male";
+
+  // AI Assistant
+  final TextEditingController _aiController = TextEditingController();
+  final ImagePicker _picker = ImagePicker();
+  final List<Map<String, String>> _aiMessages = [];
+  bool _isAiLoading = false;
+  static const String _geminiApiKey = 'AIzaSyD6IKh5Cc7jR9SrD184Qo9PnmyiJCdfN0M'; // TODO: Insert your API Key here
 
   late AnimationController _heartbeatController;
   late Animation<double> _heartbeatAnimation;
@@ -68,6 +77,7 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
   @override
   void dispose() {
     _heartbeatController.dispose();
+    _aiController.dispose();
     _nameController.dispose(); _ageController.dispose();
     _weightController.dispose(); _heightController.dispose(); _dobController.dispose();
     super.dispose();
@@ -697,9 +707,7 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
                 title: const Text("Analyze Lab Report", style: TextStyle(fontWeight: FontWeight.bold)),
                 subtitle: const Text("Upload a photo of your report for AI analysis."),
                 trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Opening Camera for OCR...")));
-                },
+                onTap: _showImageSourceDialog,
               ),
             ),
             const SizedBox(height: 20),
@@ -714,22 +722,47 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
               child: Column(
                 children: [
                   Expanded(
-                    child: Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.auto_awesome, size: 60, color: Theme.of(context).colorScheme.secondary),
-                          const SizedBox(height: 20),
-                          const Text("How can I help you today?", style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
-                        ],
-                      ),
-                    ),
+                    child: _aiMessages.isEmpty
+                        ? Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.auto_awesome, size: 60, color: Theme.of(context).colorScheme.secondary),
+                                const SizedBox(height: 20),
+                                const Text("How can I help you today?", style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
+                              ],
+                            ),
+                          )
+                        : ListView.builder(
+                            itemCount: _aiMessages.length,
+                            itemBuilder: (context, index) {
+                              final msg = _aiMessages[index];
+                              final isUser = msg['role'] == 'user';
+                              return Align(
+                                alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+                                child: Container(
+                                  margin: const EdgeInsets.symmetric(vertical: 4),
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: isUser ? Theme.of(context).colorScheme.secondary : Colors.grey.shade100,
+                                    borderRadius: BorderRadius.circular(12).copyWith(
+                                      bottomRight: isUser ? Radius.zero : null,
+                                      bottomLeft: !isUser ? Radius.zero : null,
+                                    ),
+                                  ),
+                                  child: Text(msg['text']!, style: TextStyle(color: isUser ? Colors.white : Colors.black87)),
+                                ),
+                              );
+                            },
+                          ),
                   ),
                   const Divider(),
                   Row(
                     children: [
                       Expanded(
                         child: TextField(
+                          controller: _aiController,
+                          onSubmitted: (_) => _sendMessage(),
                           decoration: InputDecoration(
                             hintText: "Type your health question...",
                             border: OutlineInputBorder(borderRadius: BorderRadius.circular(30), borderSide: BorderSide.none),
@@ -742,7 +775,10 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
                       const SizedBox(width: 10),
                       CircleAvatar(
                         backgroundColor: Theme.of(context).colorScheme.secondary,
-                        child: IconButton(icon: const Icon(Icons.send, color: Colors.white), onPressed: () {}),
+                        child: IconButton(
+                          icon: _isAiLoading ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) : const Icon(Icons.send, color: Colors.white),
+                          onPressed: _sendMessage,
+                        ),
                       ),
                     ],
                   )
@@ -753,6 +789,106 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
         ),
       ),
     );
+  }
+
+  Future<void> _sendMessage() async {
+    final text = _aiController.text.trim();
+    if (text.isEmpty) return;
+
+    setState(() {
+      _aiMessages.add({'role': 'user', 'text': text});
+      _isAiLoading = true;
+    });
+    _aiController.clear();
+
+    try {
+      final model = GenerativeModel(model: 'gemini-pro', apiKey: _geminiApiKey);
+      
+      // Construct history for the chat session to maintain context
+      final List<Content> history = _aiMessages
+          .take(_aiMessages.length - 1)
+          .map((m) => m['role'] == 'user' 
+              ? Content.text(m['text']!) 
+              : Content.model([TextPart(m['text']!)]))
+          .toList();
+
+      final chat = model.startChat(history: history);
+
+      final prompt = '''
+You are HealthNexus AI, a helpful medical assistant.
+Current Patient Context:
+- Profile: Age ${_ageController.text}, Gender $_gender, Weight $_weight kg
+- Vitals: $_vitalData
+
+User Question: $text
+
+Provide a concise, safe, and helpful medical response regarding health, symptoms, remedies, diagnostics, or nutrition. If the question is about the vitals provided, analyze them. Always advise consulting a doctor for serious issues.
+''';
+
+      final response = await chat.sendMessage(Content.text(prompt));
+
+      setState(() => _aiMessages.add({'role': 'ai', 'text': response.text ?? "No response generated."}));
+    } catch (e) {
+      setState(() => _aiMessages.add({'role': 'ai', 'text': "Error: $e"}));
+    } finally {
+      setState(() => _isAiLoading = false);
+    }
+  }
+
+  Future<void> _showImageSourceDialog() async {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt),
+              title: const Text('Take a Photo'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickAndAnalyzeImage(ImageSource.camera);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library),
+              title: const Text('Choose from Gallery'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickAndAnalyzeImage(ImageSource.gallery);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickAndAnalyzeImage(ImageSource source) async {
+    try {
+      final XFile? image = await _picker.pickImage(source: source);
+      if (image == null) return;
+
+      setState(() {
+        _aiMessages.add({'role': 'user', 'text': "📄 Analyzing attached lab report..."});
+        _isAiLoading = true;
+      });
+
+      final bytes = await image.readAsBytes();
+      // Use gemini-pro-vision for vision capabilities
+      final model = GenerativeModel(model: 'gemini-pro-vision', apiKey: _geminiApiKey);
+      
+      final prompt = TextPart("Analyze this medical lab report image. Extract key values, identify any abnormal results, and provide a brief summary of what they mean in simple terms. If the image is not a lab report, please state that.");
+      final imagePart = DataPart('image/jpeg', bytes);
+
+      final content = [Content.multi([prompt, imagePart])];
+      final response = await model.generateContent(content);
+
+      setState(() => _aiMessages.add({'role': 'ai', 'text': response.text ?? "Analysis failed."}));
+    } catch (e) {
+      setState(() => _aiMessages.add({'role': 'ai', 'text': "Error analyzing image: $e"}));
+    } finally {
+      setState(() => _isAiLoading = false);
+    }
   }
 
   Widget _buildProfileSection() {
@@ -1063,7 +1199,7 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
                   const Text("Appointment Type", style: TextStyle(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 10),
                   DropdownButtonFormField<String>(
-                    value: selectedType,
+                    initialValue: selectedType,
                     decoration: const InputDecoration(border: OutlineInputBorder(), contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 5)),
                     items: appointmentTypes.map((t) => DropdownMenuItem(value: t, child: Text(t))).toList(),
                     onChanged: (v) => setState(() => selectedType = v!),
