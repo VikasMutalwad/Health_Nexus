@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:google_generative_ai/google_generative_ai.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:health_nexus/widgets/chart_pointer.dart';
 import '../../models/user_session.dart';
-import 'dart:math';
 
 class PatientDashboard extends StatefulWidget {
   final UserSession session;
@@ -29,6 +31,13 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
   double _weight = 70.0;
   double _height = 175.0;
   String _gender = "Male";
+
+  // AI Assistant
+  final TextEditingController _aiController = TextEditingController();
+  final ImagePicker _picker = ImagePicker();
+  final List<Map<String, String>> _aiMessages = [];
+  bool _isAiLoading = false;
+  static const String _geminiApiKey = 'Insert your API Key here'; // TODO: Insert your API Key here
 
   late AnimationController _heartbeatController;
   late Animation<double> _heartbeatAnimation;
@@ -62,14 +71,51 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
 
     _heartbeatController = AnimationController(vsync: this, duration: const Duration(milliseconds: 800))..repeat(reverse: true);
     _heartbeatAnimation = Tween<double>(begin: 1.0, end: 1.25).animate(CurvedAnimation(parent: _heartbeatController, curve: Curves.easeInOut));
+    _setupPushNotifications();
   }
 
   @override
   void dispose() {
     _heartbeatController.dispose();
+    _aiController.dispose();
     _nameController.dispose(); _ageController.dispose();
     _weightController.dispose(); _heightController.dispose(); _dobController.dispose();
     super.dispose();
+  }
+
+  Future<void> _setupPushNotifications() async {
+    try {
+      FirebaseMessaging messaging = FirebaseMessaging.instance;
+      
+      // Request permission for notifications
+      NotificationSettings settings = await messaging.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
+
+      if (settings.authorizationStatus == AuthorizationStatus.authorized) {
+        // Get FCM token and save to user profile
+        String? token = await messaging.getToken();
+        if (token != null) {
+          await FirebaseFirestore.instance.collection('users').doc(widget.session.userId).set({
+            'fcmToken': token,
+          }, SetOptions(merge: true));
+        }
+
+        // Listen for foreground messages
+        FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+          if (message.notification != null) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text("Reminder: ${message.notification!.title}"),
+              action: SnackBarAction(label: "View", onPressed: _showNotifications),
+            ));
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint("Error setting up notifications: $e");
+    }
   }
 
   void _syncMockVitals() {
@@ -133,9 +179,9 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
                setState(() => _selectedIndex = 3);
                Navigator.pop(context);
              }),
-             ListTile(leading: const Icon(Icons.history), title: const Text("AI Scan History"), onTap: () {
+             ListTile(leading: const Icon(Icons.history), title: const Text("Past Visit Reports"), onTap: () {
                Navigator.pop(context);
-               Navigator.push(context, MaterialPageRoute(builder: (context) => AIScanHistoryScreen(userId: widget.session.userId)));
+               Navigator.push(context, MaterialPageRoute(builder: (context) => PastVisitReportsScreen(userId: widget.session.userId)));
              }),
              ListTile(leading: const Icon(Icons.person_outline), title: const Text("Profile Settings"), onTap: () => setState(() { _selectedIndex = 4; Navigator.pop(context); })),
              ListTile(leading: const Icon(Icons.lock_outline), title: const Text("Change Password"), onTap: _showChangePasswordDialog),
@@ -159,12 +205,6 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
           BottomNavigationBarItem(icon: Icon(Icons.person), label: "Profile"),
         ],
       ),
-      floatingActionButton: _selectedIndex == 0 ? FloatingActionButton.extended(
-        onPressed: _startAIScan,
-        backgroundColor: const Color(0xFF09E5AB),
-        icon: const Icon(Icons.camera_alt, color: Colors.white),
-        label: const Text("AI Scan", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-      ) : null,
     );
   }
 
@@ -280,241 +320,11 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
     );
   }
 
-  void _startAIScan() {
-    showGeneralDialog(
-      context: context,
-      barrierDismissible: false,
-      barrierLabel: "Scan",      barrierColor: Colors.black.withAlpha(230),
-      transitionDuration: const Duration(milliseconds: 400),
-      pageBuilder: (ctx, anim1, anim2) => const _AIScanOverlay(),
-    ).then((result) async {
-      if (result != null && result is Map<String, double>) {
-        // Save to Firestore
-        try {
-          await FirebaseFirestore.instance
-              .collection('users')
-              .doc(widget.session.userId)
-              .collection('scan_history')
-              .add({
-            'timestamp': FieldValue.serverTimestamp(),
-            'vitals': result,
-          });
-        } catch (e) {
-          debugPrint("Error saving scan history: $e");
-        }
-
-        setState(() {
-          _vitalData['Heart Rate']?.add(result['Heart Rate']!);
-          _vitalData['SpO2']?.add(result['SpO2']!);
-          _vitalData['Body Temp']?.add(result['Body Temp']!);
-          _vitalData['Blood Pressure']?.add(result['Blood Pressure']!);
-          
-          // Keep list size manageable
-          if (_vitalData['Heart Rate']!.length > 20) {
-             _vitalData.forEach((key, list) {
-               if (list.isNotEmpty) list.removeAt(0);
-             });
-          }
-        });
-        _syncMockVitals();
-        // Show AI Analysis Report instead of just a snackbar
-        _showAIAnalysisDialog(result);
-      }
-    });
-  }
-
   Widget _buildResponsiveContent({required Widget child}) {
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 1000),
         child: child,
-      ),
-    );
-  }
-
-  void _showAIAnalysisDialog(Map<String, double> vitals) {
-    List<Map<String, dynamic>> analysis = [];
-
-    // Temperature Analysis
-    double temp = vitals['Body Temp']!;
-    if (temp > 37.5) {
-      analysis.add({
-        'vital': 'Body Temperature',
-        'value': '${temp.toStringAsFixed(1)} °C',
-        'status': 'High (Fever)',
-        'color': Colors.red,
-        'illness': 'Pyrexia (Fever)',
-        'reasons': ['Viral Infection', 'Bacterial Infection', 'Heat Exhaustion'],
-        'remedies': ['Stay Hydrated', 'Rest', 'Cool Compresses'],
-        'medications': ['Paracetamol (Dolo 650)', 'Ibuprofen']
-      });
-    }
-
-    // Heart Rate Analysis
-    double hr = vitals['Heart Rate']!;
-    if (hr > 100) {
-      analysis.add({
-        'vital': 'Heart Rate',
-        'value': '${hr.toStringAsFixed(0)} bpm',
-        'status': 'High (Tachycardia)',
-        'color': Colors.red,
-        'illness': 'Tachycardia',
-        'reasons': ['Stress/Anxiety', 'Physical Exertion', 'Caffeine'],
-        'remedies': ['Deep Breathing', 'Meditation', 'Reduce Caffeine'],
-        'medications': ['Beta-blockers (Consult Doctor)']
-      });
-    }
-
-    // BP Analysis
-    double bp = vitals['Blood Pressure']!;
-    if (bp > 130) {
-      analysis.add({
-        'vital': 'Blood Pressure',
-        'value': '${bp.toStringAsFixed(0)} mmHg',
-        'status': 'High (Hypertension)',
-        'color': Colors.red,
-        'illness': 'Hypertension',
-        'reasons': ['High Sodium Diet', 'Stress', 'Lack of Activity'],
-        'remedies': ['Low Sodium Diet', 'Exercise', 'Stress Management'],
-        'medications': ['Amlodipine', 'Telmisartan (Consult Doctor)']
-      });
-    }
-
-    // SpO2 Analysis
-    double spo2 = vitals['SpO2']!;
-    if (spo2 < 95) {
-      analysis.add({
-        'vital': 'SpO2',
-        'value': '${spo2.toStringAsFixed(0)} %',
-        'status': 'Low (Hypoxia)',
-        'color': Colors.red,
-        'illness': 'Hypoxia / Respiratory Issue',
-        'reasons': ['Respiratory Infection', 'Asthma', 'High Altitude'],
-        'remedies': ['Deep Breathing', 'Upright Posture', 'Fresh Air'],
-        'medications': ['Inhalers (if prescribed)', 'Oxygen Therapy']
-      });
-    }
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        height: MediaQuery.of(context).size.height * 0.85,
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
-        ),
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(child: Container(width: 50, height: 5, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10)))),
-            const SizedBox(height: 20),
-            const Text("AI Health Analysis", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-            const Text("Based on your recent scan", style: TextStyle(color: Colors.grey)),
-            const SizedBox(height: 20),
-            if (analysis.isEmpty)
-              Expanded(
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.check_circle, color: Colors.green, size: 80),
-                      const SizedBox(height: 20),
-                      const Text("All Vitals Normal", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 10),
-                      const Text("You are in great shape! Keep it up.", style: TextStyle(color: Colors.grey)),
-                      const SizedBox(height: 30),
-                      ElevatedButton(onPressed: () => Navigator.pop(context), child: const Text("Close"))
-                    ],
-                  ),
-                ),
-              )
-            else
-              Expanded(
-                child: ListView.builder(
-                  itemCount: analysis.length,
-                  itemBuilder: (context, index) {
-                    final item = analysis[index];
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 20),
-                      padding: const EdgeInsets.all(15),
-                      decoration: BoxDecoration(
-                        color: (item['color'] as Color).withAlpha(13),
-                        border: Border.all(color: (item['color'] as Color).withAlpha(77)),
-                        borderRadius: BorderRadius.circular(15),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(item['vital'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                                decoration: BoxDecoration(color: item['color'], borderRadius: BorderRadius.circular(20)),
-                                child: Text(item['status'], style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 5),
-                          Text("Measured: ${item['value']}", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                          const Divider(),
-                          if (item['illness'] != null) ...[
-                            const Text("Potential Indication:", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey)),
-                            Text(item['illness'], style: const TextStyle(fontWeight: FontWeight.w500)),
-                            const SizedBox(height: 10),
-                          ],
-                          const Text("Possible Reasons:", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey)),
-                          Wrap(
-                            spacing: 5,
-                            children: (item['reasons'] as List<String>).map((r) => Chip(label: Text(r, style: const TextStyle(fontSize: 10)), visualDensity: VisualDensity.compact)).toList(),
-                          ),
-                          const SizedBox(height: 10),
-                          const Text("Suggested Remedies:", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey)),
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: (item['remedies'] as List<String>).map((r) => Text("• $r", style: const TextStyle(fontSize: 13))).toList(),
-                          ),
-                          const SizedBox(height: 10),
-                          Container(
-                            padding: const EdgeInsets.all(10),
-                            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10)),
-                            child: Row(
-                              children: [
-                                const Icon(Icons.medication, color: Colors.blue),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      const Text("Suggested OTC Meds:", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                                      Text((item['medications'] as List<String>).join(", "), style: const TextStyle(fontSize: 12)),
-                                    ],
-                                  ),
-                                )
-                              ],
-                            ),
-                          )
-                        ],
-                      ),
-                    );
-                  },
-                ),
-              ),
-              const SizedBox(height: 10),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0F172A), foregroundColor: Colors.white),
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text("Acknowledge & Save"),
-                ),
-              )
-          ],
-        ),
       ),
     );
   }
@@ -632,9 +442,9 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text("Health Score: Excellent", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                Text("Health Score (Last Visit)", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
                 SizedBox(height: 5),
-                Text("Your vitals are stable. Keep up the good work!", style: TextStyle(color: Colors.white70, fontSize: 13)),
+                Text("Based on report from Oct 24, 2023", style: TextStyle(color: Colors.white70, fontSize: 13)),
               ],
             ),
           ),
@@ -783,12 +593,15 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Text("Live Vitals", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            TextButton.icon(
-              onPressed: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Syncing with Wearable Device..."))),
-              icon: const Icon(Icons.watch, size: 16),
-              label: const Text("Sync Wearable"),
-            )
+            const Text("Last Visit Report", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade200,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Text("Oct 24, 2023", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black54)),
+            ),
           ],
         ),
         const SizedBox(height: 10),
@@ -894,9 +707,7 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
                 title: const Text("Analyze Lab Report", style: TextStyle(fontWeight: FontWeight.bold)),
                 subtitle: const Text("Upload a photo of your report for AI analysis."),
                 trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Opening Camera for OCR...")));
-                },
+                onTap: _showImageSourceDialog,
               ),
             ),
             const SizedBox(height: 20),
@@ -911,22 +722,47 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
               child: Column(
                 children: [
                   Expanded(
-                    child: Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.auto_awesome, size: 60, color: Theme.of(context).colorScheme.secondary),
-                          const SizedBox(height: 20),
-                          const Text("How can I help you today?", style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
-                        ],
-                      ),
-                    ),
+                    child: _aiMessages.isEmpty
+                        ? Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.auto_awesome, size: 60, color: Theme.of(context).colorScheme.secondary),
+                                const SizedBox(height: 20),
+                                const Text("How can I help you today?", style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
+                              ],
+                            ),
+                          )
+                        : ListView.builder(
+                            itemCount: _aiMessages.length,
+                            itemBuilder: (context, index) {
+                              final msg = _aiMessages[index];
+                              final isUser = msg['role'] == 'user';
+                              return Align(
+                                alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+                                child: Container(
+                                  margin: const EdgeInsets.symmetric(vertical: 4),
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: isUser ? Theme.of(context).colorScheme.secondary : Colors.grey.shade100,
+                                    borderRadius: BorderRadius.circular(12).copyWith(
+                                      bottomRight: isUser ? Radius.zero : null,
+                                      bottomLeft: !isUser ? Radius.zero : null,
+                                    ),
+                                  ),
+                                  child: Text(msg['text']!, style: TextStyle(color: isUser ? Colors.white : Colors.black87)),
+                                ),
+                              );
+                            },
+                          ),
                   ),
                   const Divider(),
                   Row(
                     children: [
                       Expanded(
                         child: TextField(
+                          controller: _aiController,
+                          onSubmitted: (_) => _sendMessage(),
                           decoration: InputDecoration(
                             hintText: "Type your health question...",
                             border: OutlineInputBorder(borderRadius: BorderRadius.circular(30), borderSide: BorderSide.none),
@@ -939,7 +775,10 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
                       const SizedBox(width: 10),
                       CircleAvatar(
                         backgroundColor: Theme.of(context).colorScheme.secondary,
-                        child: IconButton(icon: const Icon(Icons.send, color: Colors.white), onPressed: () {}),
+                        child: IconButton(
+                          icon: _isAiLoading ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) : const Icon(Icons.send, color: Colors.white),
+                          onPressed: _sendMessage,
+                        ),
                       ),
                     ],
                   )
@@ -950,6 +789,106 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
         ),
       ),
     );
+  }
+
+  Future<void> _sendMessage() async {
+    final text = _aiController.text.trim();
+    if (text.isEmpty) return;
+
+    setState(() {
+      _aiMessages.add({'role': 'user', 'text': text});
+      _isAiLoading = true;
+    });
+    _aiController.clear();
+
+    try {
+      final model = GenerativeModel(model: 'gemini-pro', apiKey: _geminiApiKey);
+      
+      // Construct history for the chat session to maintain context
+      final List<Content> history = _aiMessages
+          .take(_aiMessages.length - 1)
+          .map((m) => m['role'] == 'user' 
+              ? Content.text(m['text']!) 
+              : Content.model([TextPart(m['text']!)]))
+          .toList();
+
+      final chat = model.startChat(history: history);
+
+      final prompt = '''
+You are HealthNexus AI, a helpful medical assistant.
+Current Patient Context:
+- Profile: Age ${_ageController.text}, Gender $_gender, Weight $_weight kg
+- Vitals: $_vitalData
+
+User Question: $text
+
+Provide a concise, safe, and helpful medical response regarding health, symptoms, remedies, diagnostics, or nutrition. If the question is about the vitals provided, analyze them. Always advise consulting a doctor for serious issues.
+''';
+
+      final response = await chat.sendMessage(Content.text(prompt));
+
+      setState(() => _aiMessages.add({'role': 'ai', 'text': response.text ?? "No response generated."}));
+    } catch (e) {
+      setState(() => _aiMessages.add({'role': 'ai', 'text': "Error: $e"}));
+    } finally {
+      setState(() => _isAiLoading = false);
+    }
+  }
+
+  Future<void> _showImageSourceDialog() async {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt),
+              title: const Text('Take a Photo'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickAndAnalyzeImage(ImageSource.camera);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library),
+              title: const Text('Choose from Gallery'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickAndAnalyzeImage(ImageSource.gallery);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickAndAnalyzeImage(ImageSource source) async {
+    try {
+      final XFile? image = await _picker.pickImage(source: source);
+      if (image == null) return;
+
+      setState(() {
+        _aiMessages.add({'role': 'user', 'text': "📄 Analyzing attached lab report..."});
+        _isAiLoading = true;
+      });
+
+      final bytes = await image.readAsBytes();
+      // Use gemini-pro-vision for vision capabilities
+      final model = GenerativeModel(model: 'gemini-pro-vision', apiKey: _geminiApiKey);
+      
+      final prompt = TextPart("Analyze this medical lab report image. Extract key values, identify any abnormal results, and provide a brief summary of what they mean in simple terms. If the image is not a lab report, please state that.");
+      final imagePart = DataPart('image/jpeg', bytes);
+
+      final content = [Content.multi([prompt, imagePart])];
+      final response = await model.generateContent(content);
+
+      setState(() => _aiMessages.add({'role': 'ai', 'text': response.text ?? "Analysis failed."}));
+    } catch (e) {
+      setState(() => _aiMessages.add({'role': 'ai', 'text': "Error analyzing image: $e"}));
+    } finally {
+      setState(() => _isAiLoading = false);
+    }
   }
 
   Widget _buildProfileSection() {
@@ -1112,20 +1051,7 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
         SizedBox(
           width: double.infinity,
           child: ElevatedButton.icon(
-            onPressed: () async {
-              // Create a request
-              Map<String, dynamic> currentVitals = {};
-              _vitalData.forEach((k, v) { if(v.isNotEmpty) currentVitals[k] = v.last; });
-              
-              await FirebaseFirestore.instance.collection('appointments').add({
-                'patientId': widget.session.userId,
-                'patientName': widget.session.name.isNotEmpty ? widget.session.name : widget.session.username,
-                'status': 'pending',
-                'requestDate': FieldValue.serverTimestamp(),
-                'vitals': currentVitals,
-              });
-              if(mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Appointment Request Sent to Doctors")));
-            },
+            onPressed: _showBookAppointmentDialog,
             icon: const Icon(Icons.add_circle_outline),
             label: const Text("Book New Appointment"),
             style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF09E5AB), foregroundColor: Colors.white),
@@ -1149,6 +1075,13 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
                 final isConfirmed = status == 'confirmed';
                 final isRejected = status == 'rejected';
                 final doctorMessage = data['doctorMessage'];
+                
+                final type = data['type'] ?? 'Clinic Visit';
+                final Timestamp? apptTimestamp = data['appointmentDate'];
+                final apptDate = apptTimestamp?.toDate();
+                final dateStr = apptDate != null 
+                    ? "${apptDate.day}/${apptDate.month} ${apptDate.hour.toString().padLeft(2,'0')}:${apptDate.minute.toString().padLeft(2,'0')}" 
+                    : "Date Pending";
 
                 Color statusColor = isConfirmed ? const Color(0xFF28A745) : (isRejected ? Colors.red : const Color(0xFFFFA000));
                 Color bgColor = isConfirmed ? const Color(0xFFE2F6ED) : (isRejected ? Colors.red.shade50 : const Color(0xFFFFF2D8));
@@ -1165,10 +1098,10 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
                     contentPadding: EdgeInsets.zero,
                     leading: CircleAvatar(
                       backgroundColor: bgColor,
-                      child: Icon(Icons.calendar_today, color: statusColor),
+                      child: Icon(type == 'Video Call' ? Icons.videocam : (type == 'Audio Call' ? Icons.call : (type == 'Chat' ? Icons.chat : Icons.calendar_today)), color: statusColor),
                     ),
                     title: Text(
-                      isConfirmed ? "Appointment Confirmed" : (isRejected ? "Appointment Rejected" : "Request Pending"), 
+                      "$type ($dateStr)", 
                       style: const TextStyle(fontWeight: FontWeight.bold)
                     ),
                     subtitle: Column(
@@ -1218,6 +1151,95 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
     );
   }
 
+  void _showBookAppointmentDialog() {
+    DateTime? selectedDate;
+    TimeOfDay? selectedTime;
+    String selectedType = 'Clinic Visit';
+    final List<String> appointmentTypes = ['Clinic Visit', 'Home Visit', 'Video Call', 'Audio Call', 'Chat'];
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text("Book Appointment"),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text("Select Date & Time", style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () async {
+                            final date = await showDatePicker(context: context, initialDate: DateTime.now(), firstDate: DateTime.now(), lastDate: DateTime.now().add(const Duration(days: 365)));
+                            if (date != null) setState(() => selectedDate = date);
+                          },
+                          icon: const Icon(Icons.calendar_today, size: 18),
+                          label: Text(selectedDate == null ? "Date" : "${selectedDate!.day}/${selectedDate!.month}/${selectedDate!.year}", style: const TextStyle(fontSize: 12)),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () async {
+                            final time = await showTimePicker(context: context, initialTime: TimeOfDay.now());
+                            if (time != null) setState(() => selectedTime = time);
+                          },
+                          icon: const Icon(Icons.access_time, size: 18),
+                          label: Text(selectedTime == null ? "Time" : selectedTime!.format(context), style: const TextStyle(fontSize: 12)),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  const Text("Appointment Type", style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 10),
+                  DropdownButtonFormField<String>(
+                    initialValue: selectedType,
+                    decoration: const InputDecoration(border: OutlineInputBorder(), contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 5)),
+                    items: appointmentTypes.map((t) => DropdownMenuItem(value: t, child: Text(t))).toList(),
+                    onChanged: (v) => setState(() => selectedType = v!),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+                ElevatedButton(
+                  onPressed: () async {
+                    if (selectedDate == null || selectedTime == null) {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please select date and time")));
+                      return;
+                    }
+                    final DateTime appointmentDateTime = DateTime(selectedDate!.year, selectedDate!.month, selectedDate!.day, selectedTime!.hour, selectedTime!.minute);
+                    Map<String, dynamic> currentVitals = {};
+                    _vitalData.forEach((k, v) { if(v.isNotEmpty) currentVitals[k] = v.last; });
+
+                    await FirebaseFirestore.instance.collection('appointments').add({
+                      'patientId': widget.session.userId,
+                      'patientName': widget.session.name.isNotEmpty ? widget.session.name : widget.session.username,
+                      'status': 'pending',
+                      'requestDate': FieldValue.serverTimestamp(),
+                      'appointmentDate': Timestamp.fromDate(appointmentDateTime),
+                      'type': selectedType,
+                      'vitals': currentVitals,
+                    });
+                    if (mounted) { Navigator.pop(ctx); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Appointment Request Sent"))); }
+                  },
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF09E5AB), foregroundColor: Colors.white),
+                  child: const Text("Book"),
+                ),
+              ],
+            );
+          }
+        );
+      },
+    );
+  }
+
   Color _getVitalColor(String vital) {
     switch (vital) {
       case 'Heart Rate': return const Color(0xFF1B5A90);
@@ -1235,155 +1257,103 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
   }
 }
 
-class _AIScanOverlay extends StatefulWidget {
-  const _AIScanOverlay();
-
-  @override
-  State<_AIScanOverlay> createState() => _AIScanOverlayState();
-}
-
-class _AIScanOverlayState extends State<_AIScanOverlay> with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  String _statusText = "Initializing Camera...";
-  
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat(reverse: true);
-    _startScanSequence();
-  }
-
-  void _startScanSequence() async {
-    await Future.delayed(const Duration(seconds: 1));
-    if(mounted) setState(() => _statusText = "Detecting Face...");
-    await Future.delayed(const Duration(seconds: 1));
-    if(mounted) setState(() => _statusText = "Scanning Heart Rate (PPG)...");
-    await Future.delayed(const Duration(seconds: 1));
-    if(mounted) setState(() => _statusText = "Analyzing SpO2 Levels...");
-    await Future.delayed(const Duration(seconds: 1));
-    if(mounted) setState(() => _statusText = "Measuring Body Temperature...");
-    await Future.delayed(const Duration(seconds: 1));
-    if(mounted) setState(() => _statusText = "Estimating Blood Pressure...");
-    await Future.delayed(const Duration(seconds: 1));
-    if(mounted) setState(() => _statusText = "Finalizing Health Analysis...");
-    await Future.delayed(const Duration(seconds: 1));
-    
-    if(mounted) {
-      final random = Random();
-      Navigator.pop(context, {
-        'Heart Rate': 60.0 + random.nextInt(50),
-        'SpO2': 93.0 + random.nextInt(7),
-        'Body Temp': 36.0 + (random.nextDouble() * 2.5),
-        'Blood Pressure': 110.0 + random.nextInt(35),
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 280,
-              height: 280,
-              decoration: BoxDecoration(
-                border: Border.all(color: const Color(0xFF09E5AB), width: 2),
-                borderRadius: BorderRadius.circular(20),
-                color: Colors.black26,                boxShadow: [BoxShadow(color: const Color(0xFF09E5AB).withAlpha(51), blurRadius: 20, spreadRadius: 5)],
-              ),
-              child: Stack(
-                children: [
-                  const Center(child: Icon(Icons.face_retouching_natural, size: 180, color: Colors.white12)),
-                  AnimatedBuilder(
-                    animation: _controller,
-                    builder: (context, child) {
-                      return Positioned(
-                        top: _controller.value * 260,
-                        left: 0,
-                        right: 0,
-                        child: Container(
-                          height: 4,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF09E5AB),                            boxShadow: [BoxShadow(color: const Color(0xFF09E5AB).withAlpha(204), blurRadius: 10, spreadRadius: 2)],
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 40),
-            Text(_statusText, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1)),
-            const SizedBox(height: 20),
-            const SizedBox(
-              width: 200,
-              child: LinearProgressIndicator(color: Color(0xFF09E5AB), backgroundColor: Colors.white12),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class AIScanHistoryScreen extends StatelessWidget {
+class PastVisitReportsScreen extends StatelessWidget {
   final String userId;
-  const AIScanHistoryScreen({super.key, required this.userId});
+  const PastVisitReportsScreen({super.key, required this.userId});
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("AI Scan History")),
+      appBar: AppBar(
+        title: const Text("Past Visit Reports", style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold)),
+        backgroundColor: Colors.white,
+        elevation: 0,
+        iconTheme: const IconThemeData(color: Colors.black87),
+      ),
       body: StreamBuilder<QuerySnapshot>(
         stream: FirebaseFirestore.instance
             .collection('users')
             .doc(userId)
-            .collection('scan_history')
-            .orderBy('timestamp', descending: true)
+            .collection('visit_reports')
+            .orderBy('date', descending: true)
             .snapshots(),
         builder: (context, snapshot) {
-          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-          final docs = snapshot.data!.docs;
-          if (docs.isEmpty) return const Center(child: Text("No scan history found."));
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          
+          final docs = snapshot.data?.docs ?? [];
+          
+          if (docs.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.folder_open, size: 80, color: Colors.grey.shade300),
+                  const SizedBox(height: 20),
+                  const Text("No reports available", style: TextStyle(color: Colors.grey, fontSize: 18)),
+                ],
+              ),
+            );
+          }
 
           return ListView.builder(
+            padding: const EdgeInsets.all(16),
             itemCount: docs.length,
             itemBuilder: (context, index) {
               final data = docs[index].data() as Map<String, dynamic>;
-              final vitals = data['vitals'] as Map<String, dynamic>;
-              final timestamp = (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now();
+              final date = (data['date'] as Timestamp?)?.toDate() ?? DateTime.now();
+              final doctorName = data['doctorName'] ?? 'General Practitioner';
+              final diagnosis = data['diagnosis'] ?? 'Regular Checkup';
+              final hospital = data['hospital'] ?? 'Health Nexus Clinic';
 
               return Card(
-                margin: const EdgeInsets.symmetric(horizontal: 15, vertical: 8),
-                child: ExpansionTile(
-                  title: Text("Scan: ${timestamp.toString().split('.')[0]}"),
-                  subtitle: Text("HR: ${vitals['Heart Rate']?.toStringAsFixed(0)} bpm | Temp: ${vitals['Body Temp']?.toStringAsFixed(1)} °C"),
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.all(15),
-                      child: Wrap(
-                        spacing: 20,
-                        runSpacing: 10,
-                        children: vitals.entries.map((e) => Column(
-                          children: [
-                            Text(e.key, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                            Text(e.value.toStringAsFixed(1), style: const TextStyle(fontWeight: FontWeight.bold)),
-                          ],
-                        )).toList(),
+                margin: const EdgeInsets.only(bottom: 16),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                elevation: 2,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            "${date.day}/${date.month}/${date.year}",
+                            style: const TextStyle(color: Colors.grey, fontWeight: FontWeight.bold),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFE0F2FE),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Text("Completed", style: TextStyle(color: Color(0xFF0288D1), fontSize: 12, fontWeight: FontWeight.bold)),
+                          ),
+                        ],
                       ),
-                    )
-                  ],
+                      const SizedBox(height: 12),
+                      Text(diagnosis, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 4),
+                      Text("Dr. $doctorName • $hospital", style: const TextStyle(color: Colors.black54)),
+                      const SizedBox(height: 16),
+                      const Divider(),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton.icon(
+                            onPressed: () {
+                              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Downloading PDF Report...")));
+                            },
+                            icon: const Icon(Icons.download_rounded, size: 20),
+                            label: const Text("Download PDF"),
+                            style: TextButton.styleFrom(foregroundColor: const Color(0xFF09E5AB)),
+                          ),
+                        ],
+                      )
+                    ],
+                  ),
                 ),
               );
             },

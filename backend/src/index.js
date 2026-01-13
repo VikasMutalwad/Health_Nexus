@@ -61,9 +61,32 @@ app.get('/', (req, res) => {
   res.send('Health Nexus Backend is running.');
 });
 
-// Example Protected Route
-app.get('/api/health-data', verifyToken, (req, res) => {
-  res.json({ message: `Secure health data for user: ${req.user.uid}` });
+// POST Endpoint: Add Health Data (Vitals, Logs, etc.)
+app.post('/api/health-data', verifyToken, async (req, res) => {
+  try {
+    const { type, value, unit, date } = req.body;
+
+    // Basic Input Validation
+    if (!type || !value) {
+      return res.status(400).json({ error: 'Missing required fields: type, value' });
+    }
+
+    const newRecord = {
+      type, // e.g., 'Heart Rate', 'Blood Pressure'
+      value,
+      unit: unit || '',
+      date: date || new Date().toISOString(),
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    };
+
+    // Save to a sub-collection 'health_records' under the specific user
+    await db.collection('users').doc(req.user.uid).collection('health_records').add(newRecord);
+    
+    res.status(200).json({ message: 'Health data saved successfully' });
+  } catch (error) {
+    console.error('Error saving health data:', error);
+    res.status(500).json({ error: 'Failed to save health data' });
+  }
 });
 
 // POST Endpoint: Save User Profile
@@ -91,6 +114,26 @@ app.get('/api/user-profile', verifyToken, async (req, res) => {
   } catch (error) {
     console.error('Error fetching user profile:', error);
     res.status(500).json({ error: 'Failed to fetch user profile' });
+  }
+});
+
+// GET Endpoint: Fetch Health Data
+app.get('/api/health-data', verifyToken, async (req, res) => {
+  try {
+    const snapshot = await db.collection('users').doc(req.user.uid)
+      .collection('health_records')
+      .orderBy('date', 'desc')
+      .get();
+    
+    const records = [];
+    snapshot.forEach(doc => {
+      records.push({ id: doc.id, ...doc.data() });
+    });
+
+    res.status(200).json(records);
+  } catch (error) {
+    console.error('Error fetching health data:', error);
+    res.status(500).json({ error: 'Failed to fetch health data' });
   }
 });
 

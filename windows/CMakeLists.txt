@@ -1,6 +1,11 @@
 # Project-level configuration.
 cmake_minimum_required(VERSION 3.14)
+set(CMAKE_POLICY_VERSION_MINIMUM "3.5")  
 project(health_nexus LANGUAGES CXX)
+
+# Suppress deprecation warnings from dependencies (like Firebase)
+set(CMAKE_WARN_DEPRECATED OFF CACHE BOOL "" FORCE)
+set(CMAKE_SUPPRESS_DEVELOPER_WARNINGS 1 CACHE INTERNAL "No dev warnings")
 
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
