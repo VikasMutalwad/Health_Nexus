@@ -37,7 +37,7 @@ class _PatientDashboardState extends State<PatientDashboard> with SingleTickerPr
   final ImagePicker _picker = ImagePicker();
   final List<Map<String, String>> _aiMessages = [];
   bool _isAiLoading = false;
-  static const String _geminiApiKey = 'AIzaSyD6IKh5Cc7jR9SrD184Qo9PnmyiJCdfN0M'; // TODO: Insert your API Key here
+  static const String _geminiApiKey = 'Insert your API Key here'; // TODO: Insert your API Key here
 
   late AnimationController _heartbeatController;
   late Animation<double> _heartbeatAnimation;
