@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "300186178880",
+    "project_id": "healthnexus-3db2e",
+    "storage_bucket": "healthnexus-3db2e.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:300186178880:android:ceadaa36800c71b13ed6a5",
+        "android_client_info": {
+          "package_name": "com.example.health_nexus"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDWdyx4iwayJcY2F54NMEjl7PNazM5n6Oo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
